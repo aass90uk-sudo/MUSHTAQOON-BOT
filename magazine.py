@@ -1,10 +1,19 @@
 import asyncio
 import logging
+import os  # جلب مكتبة النظام لقراءة المتغيرات البيئية من Railway
 import fitz  # PyMuPDF
 
-# الثوابت المحددة بناءً على طلبك
+# ==========================================
+# قراءة المتغيرات والديناميكية من منصة Railway
+# ==========================================
 MAGAZINE_TITLE = "مجلة المشتاقون إلى الجنة"
-CHANNEL_USERNAME = "@Athar_Dz_Islamic"
+
+# قراءة اسم المستخدم أو استخدام القيمة الافتراضية إذا لم تتوفر
+CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@Athar_Dz_Islamic")
+
+# الاعتماد على ملف magazine.pdf كقيمة افتراضية لضمان قراءة ملف الـ PDF الصحيح
+MAGAZINE_PATH = os.environ.get("MAGAZINE_FILE", "magazine.pdf")
+
 MAX_CAPTION_LENGTH = 1000
 
 # قفل الأمان لمنع تداخل عمليات النشر المتزامنة
@@ -98,7 +107,7 @@ async def publish_next_page(bot):
     نشرها في التليجرام (صورة + نص)، ثم تحديث حالة التقدم في قاعدة البيانات.
     """
     async with _publish_lock:
-        # قراءة التقدم الحالي (يتم استيرادها أو قراءتها من سياق المشروع لديك)
+        # قراءة التقدم الحالي
         progress = load_progress()
 
         if progress["finished"]:
@@ -162,12 +171,12 @@ async def publish_next_page(bot):
                 document.close()
 
             # ==================================
-            # التحقق وحفظ التقدم في Supabase
+            # التحقق وحفظ التقدم
             # ==================================
             is_finished = page_number >= total_pages
             
             if is_finished:
-                next_page_num = page_number  # تثبيت العداد عند الصفحة الأخيرة لأنها انتهت
+                next_page_num = page_number
                 log_msg = f"[MAGAZINE] تم نشر آخر صفحة ({page_number}) وانتهت المجلة بالكامل."
             else:
                 next_page_num = page_number + 1
@@ -196,4 +205,4 @@ async def publish_next_page(bot):
             logging.info("[MAGAZINE] سيتم الانتظار 60 ثانية قبل المحاولة التالية...")
             await asyncio.sleep(60)
             return False
-            
+    
