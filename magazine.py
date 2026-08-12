@@ -18,6 +18,7 @@ from config import (
     MAGAZINE_TITLE,
     CHANNEL_USERNAME,
     CHANNEL_LINK,
+    START_PAGE,
 )
 
 
@@ -80,7 +81,7 @@ def load_progress():
         PROGRESS_FILE
     ):
         return {
-            "next_page": 1,
+            "next_page": START_PAGE,
             "finished": False,
         }
 
@@ -98,7 +99,7 @@ def load_progress():
             "next_page": int(
                 data.get(
                     "next_page",
-                    1,
+                    START_PAGE,
                 )
             ),
             "finished": bool(
@@ -116,7 +117,7 @@ def load_progress():
         )
 
         return {
-            "next_page": 1,
+            "next_page": START_PAGE,
             "finished": False,
         }
 
@@ -450,10 +451,13 @@ async def publish_next_page(bot):
             )
 
             try:
+
                 total_pages = len(
                     document
                 )
+
             finally:
+
                 document.close()
 
             # ==================================
@@ -504,6 +508,6 @@ async def publish_next_page(bot):
                 f"{page_number}: {e}"
             )
 
-            # لا نزيد رقم الصفحة عند الفشل.
-            # ستتم محاولة نفس الصفحة مرة أخرى.
+            # لا يتم تغيير رقم الصفحة عند الفشل.
+            # ستتم إعادة محاولة نفس الصفحة لاحقاً.
             return
