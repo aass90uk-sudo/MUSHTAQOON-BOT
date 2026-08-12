@@ -11,8 +11,10 @@ MAGAZINE_TITLE = "مجلة المشتاقون إلى الجنة"
 # قراءة اسم المستخدم أو استخدام القيمة الافتراضية إذا لم تتوفر
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@Athar_Dz_Islamic")
 
-# الاعتماد على ملف magazine.pdf كقيمة افتراضية لضمان قراءة ملف الـ PDF الصحيح
-MAGAZINE_PATH = os.environ.get("MAGAZINE_FILE", "magazine.pdf")
+# تصحيح مسار الملف بناءً على هيكلة المجلدات في الجيت هاب لديك:
+# اسم المجلد هو magazine.pdf وداخل الملف المشتاقون_إلى_الجنة.pdf
+DEFAULT_PATH = os.path.join("magazine.pdf", "المشتاقون_إلى_الجنة.pdf")
+MAGAZINE_PATH = os.environ.get("MAGAZINE_FILE", DEFAULT_PATH)
 
 MAX_CAPTION_LENGTH = 1000
 
@@ -205,4 +207,4 @@ async def publish_next_page(bot):
             logging.info("[MAGAZINE] سيتم الانتظار 60 ثانية قبل المحاولة التالية...")
             await asyncio.sleep(60)
             return False
-    
+                
