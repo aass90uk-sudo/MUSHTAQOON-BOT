@@ -6,9 +6,8 @@ from telegram.ext import Application
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 
-from config import TELEGRAM_TOKEN, TIMEZONE
+from config import PUBLISH_RETRIES, TELEGRAM_TOKEN, TIMEZONE
 from magazine import publish_next_page
-
 
 # ==========================================
 # Logging
@@ -24,7 +23,6 @@ logging.basicConfig(
 )
 
 logging.info("========== BOT STARTED ==========")
-
 
 async def verify_configuration(bot) -> None:
     """Fail early with an actionable message instead of a silent retry."""
@@ -59,26 +57,37 @@ async def verify_configuration(bot) -> None:
     )
     logging.info("[CHECK] Magazine OK: %s", MAGAZINE_PATH)
 
-
-async def publish_on_startup(application: Application) -> None:
-    """Try the first page more than once so transient API errors recover."""
-    for attempt in range(1, 4):
+async def publish_with_retries(bot, source: str) -> None:
+    """Retry a post after temporary Telegram, Groq, or network failures."""
+    for attempt in range(1, PUBLISH_RETRIES + 1):
         try:
-            published = await publish_next_page(application.bot)
-            if published:
+            if await publish_next_page(bot):
                 return
-            logging.warning(
-                "[STARTUP] النشر لم يكتمل، ستتم إعادة المحاولة."
-            )
         except Exception:
             logging.exception(
-                "[STARTUP] محاولة النشر %s/3 فشلت.",
+                "[%s] محاولة النشر %s/%s فشلت.",
+                source,
                 attempt,
+                PUBLISH_RETRIES,
             )
 
-        if attempt < 3:
-            await asyncio.sleep(10 * attempt)
+        if attempt < PUBLISH_RETRIES:
+            delay = 15 * attempt
+            logging.warning(
+                "[%s] ستتم إعادة المحاولة بعد %s ثانية.",
+                source,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
+    logging.error(
+        "[%s] تعذر النشر بعد %s محاولات؛ ستستمر الجدولة.",
+        source,
+        PUBLISH_RETRIES,
+    )
+
+async def publish_on_startup(application: Application) -> None:
+    await publish_with_retries(application.bot, "STARTUP")
 
 # ==========================================
 # الجدولة
@@ -92,13 +101,11 @@ async def post_init(application: Application) -> None:
 
     try:
         await verify_configuration(application.bot)
-        logging.info("تشغيل النشر الأول...")
-        await publish_on_startup(application)
     except Exception as e:
-        logging.exception(
-            "[STARTUP] تعذر بدء النشر: %s",
-            e,
-        )
+        logging.exception("[CHECK] فشل فحص الإعدادات: %s", e)
+
+    logging.info("تشغيل النشر الأول...")
+    await publish_on_startup(application)
 
     # ======================================
     # توقيت مكة
@@ -115,11 +122,11 @@ async def post_init(application: Application) -> None:
     # ======================================
 
     scheduler.add_job(
-        publish_next_page,
+        publish_with_retries,
         "cron",
         hour=6,
         minute=0,
-        args=[application.bot],
+        args=[application.bot, "MORNING"],
         id="morning_magazine",
         replace_existing=True,
     )
@@ -129,11 +136,11 @@ async def post_init(application: Application) -> None:
     # ======================================
 
     scheduler.add_job(
-        publish_next_page,
+        publish_with_retries,
         "cron",
         hour=20,
         minute=0,
-        args=[application.bot],
+        args=[application.bot, "EVENING"],
         id="evening_magazine",
         replace_existing=True,
     )
@@ -154,7 +161,6 @@ async def post_init(application: Application) -> None:
         "النشر المسائي: 20:00 بتوقيت مكة."
     )
 
-
 # ==========================================
 # إيقاف الجدولة
 # ==========================================
@@ -172,7 +178,6 @@ async def post_stop(application: Application) -> None:
         logging.info(
             "تم إيقاف الجدولة بأمان."
         )
-
 
 # ==========================================
 # تشغيل البوت
@@ -205,10 +210,10 @@ def main():
         drop_pending_updates=True
     )
 
-
 # ==========================================
 # نقطة البداية
 # ==========================================
 
 if __name__ == "__main__":
     main()
+        
