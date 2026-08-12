@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 
 from telegram.ext import Application
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,6 +19,7 @@ print("========== STARTING MUSHTAQOON BOT ==========")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
     force=True,
 )
 

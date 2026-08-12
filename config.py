@@ -49,18 +49,11 @@ START_PAGE = int(
 )
 
 # ==========================================
-# مكان حفظ تقدم المجلة
+# مكان حفظ تقدم المجلة (Supabase)
 # ==========================================
 
-DATA_DIR = os.getenv(
-    "DATA_DIR",
-    "data",
-)
-
-PROGRESS_FILE = os.path.join(
-    DATA_DIR,
-    "progress.json",
-)
+SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")).strip()
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("VITE_SUPABASE_ANON_KEY", "")).strip()
 
 # ==========================================
 # جودة تحويل PDF إلى صورة

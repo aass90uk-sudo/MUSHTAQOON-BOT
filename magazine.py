@@ -1,5 +1,4 @@
 import os
-import json
 import base64
 import asyncio
 import logging
@@ -7,6 +6,7 @@ import threading
 import glob
 
 import fitz
+import requests
 from groq import Groq
 
 from config import (
@@ -14,7 +14,8 @@ from config import (
     GROQ_VISION_MODEL,
     MAGAZINE_FILE,
     MAGAZINE_DIR,
-    PROGRESS_FILE,
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY,
     PDF_DPI,
     MAGAZINE_TITLE,
     CHANNEL_USERNAME,
@@ -59,9 +60,6 @@ def resolve_magazine_path() -> str:
         if os.path.isfile(candidate):
             return candidate
 
-    # A Unicode filename copied into Railway can contain a different
-    # normalization or an invisible character. If there is one PDF in the
-    # configured directory, use it rather than failing on a false mismatch.
     pdf_files = sorted(glob.glob(os.path.join(MAGAZINE_DIR, "*.pdf")))
     if len(pdf_files) == 1:
         logging.warning(
@@ -77,114 +75,97 @@ MAGAZINE_PATH = resolve_magazine_path()
 
 
 # ==========================================
-# التأكد من مجلد البيانات
-# ==========================================
-
-def ensure_data_dir():
-
-    directory = os.path.dirname(
-        PROGRESS_FILE
-    )
-
-    if directory:
-        os.makedirs(
-            directory,
-            exist_ok=True,
-        )
-
-
-# ==========================================
-# قراءة التقدم
+# قراءة التقدم (من Supabase)
 # ==========================================
 
 def load_progress():
+    """Read the bot's progress from Supabase. Falls back to START_PAGE on failure."""
 
-    ensure_data_dir()
+    fallback = {
+        "next_page": START_PAGE,
+        "finished": False,
+    }
 
-    if not os.path.exists(
-        PROGRESS_FILE
-    ):
-        return {
-            "next_page": START_PAGE,
-            "finished": False,
-        }
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        logging.warning(
+            "[PROGRESS] SUPABASE_URL أو SUPABASE_ANON_KEY غير موجود؛ "
+            "استخدام القيمة الافتراضية."
+        )
+        return fallback
 
     try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/magazine_progress?id=eq.1",
+            headers={
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json()
 
-        with open(
-            PROGRESS_FILE,
-            "r",
-            encoding="utf-8",
-        ) as file:
+        if not rows:
+            logging.info(
+                "[PROGRESS] لا يوجد سجل بعد؛ البدء من الصفحة %s.",
+                START_PAGE,
+            )
+            return fallback
 
-            data = json.load(file)
-
+        row = rows[0]
         return {
-            "next_page": int(
-                data.get(
-                    "next_page",
-                    START_PAGE,
-                )
-            ),
-            "finished": bool(
-                data.get(
-                    "finished",
-                    False,
-                )
-            ),
+            "next_page": int(row["next_page"]),
+            "finished": bool(row["finished"]),
         }
 
     except Exception as e:
-
         logging.error(
-            f"خطأ في قراءة progress.json: {e}"
+            "[PROGRESS] خطأ في قراءة التقدم من Supabase: %s", e
         )
-
-        return {
-            "next_page": START_PAGE,
-            "finished": False,
-        }
+        return fallback
 
 
 # ==========================================
-# حفظ التقدم
+# حفظ التقدم (في Supabase)
 # ==========================================
 
 def save_progress(
     next_page: int,
     finished: bool = False,
 ):
+    """Persist the bot's progress to Supabase via upsert."""
 
-    ensure_data_dir()
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        logging.error(
+            "[PROGRESS] لا يمكن الحفظ: SUPABASE_URL أو SUPABASE_ANON_KEY غير موجود."
+        )
+        return
 
-    temporary_file = (
-        f"{PROGRESS_FILE}.tmp"
-    )
-
-    data = {
+    payload = {
+        "id": 1,
         "next_page": next_page,
         "finished": finished,
+        "updated_at": "now()",
     }
 
     with _sync_lock:
-
-        with open(
-            temporary_file,
-            "w",
-            encoding="utf-8",
-        ) as file:
-
-            json.dump(
-                data,
-                file,
-                ensure_ascii=False,
-                indent=2,
+        try:
+            response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/magazine_progress",
+                headers={
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates",
+                },
+                json=payload,
+                timeout=10,
             )
-
-        os.replace(
-            temporary_file,
-            PROGRESS_FILE,
-        )
+            response.raise_for_status()
+        except Exception as e:
+            logging.error(
+                "[PROGRESS] خطأ في حفظ التقدم إلى Supabase: %s", e
+            )
 
 
 # ==========================================
@@ -399,18 +380,10 @@ async def publish_next_page(bot):
 
         try:
 
-            # ==================================
-            # تحويل الصفحة
-            # ==================================
-
             image_bytes = await asyncio.to_thread(
                 render_page,
                 page_number,
             )
-
-            # ==================================
-            # استخراج النص
-            # ==================================
 
             logging.info(
                 f"[MAGAZINE] استخراج نص الصفحة "
@@ -434,18 +407,10 @@ async def publish_next_page(bot):
                 f"للصفحة {page_number}."
             )
 
-            # ==================================
-            # تجهيز المنشور
-            # ==================================
-
             final_text = build_text(
                 page_number,
                 extracted_text,
             )
-
-            # ==================================
-            # إرسال الصورة
-            # ==================================
 
             logging.info(
                 f"[MAGAZINE] نشر الصفحة "
@@ -457,18 +422,10 @@ async def publish_next_page(bot):
                 photo=image_bytes,
             )
 
-            # ==================================
-            # إرسال النص
-            # ==================================
-
             await bot.send_message(
                 chat_id=CHANNEL_USERNAME,
                 text=final_text,
             )
-
-            # ==================================
-            # معرفة عدد الصفحات
-            # ==================================
 
             document = fitz.open(MAGAZINE_PATH)
 
@@ -481,10 +438,6 @@ async def publish_next_page(bot):
             finally:
 
                 document.close()
-
-            # ==================================
-            # حفظ التقدم بعد نجاح النشر
-            # ==================================
 
             if page_number >= total_pages:
 
@@ -533,6 +486,4 @@ async def publish_next_page(bot):
                 f"{page_number}: {e}"
             )
 
-            # لا يتم تغيير رقم الصفحة عند الفشل.
-            # ستتم إعادة محاولة نفس الصفحة لاحقاً.
             return False
