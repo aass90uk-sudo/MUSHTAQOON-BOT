@@ -65,7 +65,7 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("VITE_SUPABASE_ANON
 PDF_DPI = int(
     os.getenv(
         "PDF_DPI",
-        "180",
+        "150",
     )
 )
 
