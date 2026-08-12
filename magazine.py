@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import glob
+import re
 
 import fitz
 import requests
@@ -25,11 +26,26 @@ from config import (
 
 
 # ==========================================
+# إعدادات النشر
+# ==========================================
+
+# الحد الأقصى للنص المستخرج المستخدم في منشور الصورة.
+# نترك مساحة كافية للعنوان والختم والرابط حتى لا نتجاوز
+# حد Telegram البالغ 1024 حرفاً.
+MAX_POST_LENGTH = 1000
+
+# الختم الثابت المطلوب في نهاية المنشور.
+CONTINUATION_TEXT = "بقية تكملة نص الصفحة يوجد في صورة المجلة❤️"
+
+# رابط القناة الثابت.
+CHANNEL_FOOTER = "@Athar_Dz_Islamic"
+
+
+# ==========================================
 # منع تشغيل عمليتي نشر في نفس الوقت
 # ==========================================
 
 _publish_lock = asyncio.Lock()
-
 _sync_lock = threading.Lock()
 
 
@@ -49,23 +65,48 @@ groq_client = (
 # ==========================================
 
 def resolve_magazine_path() -> str:
-    """Resolve the PDF even when Railway supplies a relative/full path."""
-    configured_path = os.path.expanduser(MAGAZINE_FILE.strip())
-    candidates = [configured_path]
+    """العثور على ملف PDF حتى لو كان المسار نسبياً."""
 
-    if not os.path.isabs(configured_path):
-        candidates.insert(0, os.path.join(MAGAZINE_DIR, configured_path))
+    configured_path = os.path.expanduser(
+        MAGAZINE_FILE.strip()
+    )
+
+    candidates = [
+        configured_path
+    ]
+
+    if not os.path.isabs(
+        configured_path
+    ):
+        candidates.insert(
+            0,
+            os.path.join(
+                MAGAZINE_DIR,
+                configured_path,
+            ),
+        )
 
     for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate
 
-    pdf_files = sorted(glob.glob(os.path.join(MAGAZINE_DIR, "*.pdf")))
+    pdf_files = sorted(
+        glob.glob(
+            os.path.join(
+                MAGAZINE_DIR,
+                "*.pdf",
+            )
+        )
+    )
+
     if len(pdf_files) == 1:
+
         logging.warning(
-            "[MAGAZINE] MAGAZINE_FILE did not match exactly; using %s",
+            "[MAGAZINE] MAGAZINE_FILE لم يطابق الاسم تماماً؛ "
+            "سيتم استخدام: %s",
             pdf_files[0],
         )
+
         return pdf_files[0]
 
     return candidates[0]
@@ -75,70 +116,96 @@ MAGAZINE_PATH = resolve_magazine_path()
 
 
 # ==========================================
-# قراءة التقدم (من Supabase)
+# قراءة تقدم المجلة من Supabase
 # ==========================================
 
 def load_progress():
-    """Read the bot's progress from Supabase. Falls back to START_PAGE on failure."""
 
     fallback = {
         "next_page": START_PAGE,
         "finished": False,
     }
 
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    if (
+        not SUPABASE_URL
+        or not SUPABASE_ANON_KEY
+    ):
+
         logging.warning(
-            "[PROGRESS] SUPABASE_URL أو SUPABASE_ANON_KEY غير موجود؛ "
-            "استخدام القيمة الافتراضية."
+            "[PROGRESS] Supabase غير مضبوط؛ "
+            "البدء من START_PAGE=%s",
+            START_PAGE,
         )
+
         return fallback
 
     try:
+
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/magazine_progress?id=eq.1",
             headers={
                 "apikey": SUPABASE_ANON_KEY,
-                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "Authorization": (
+                    f"Bearer {SUPABASE_ANON_KEY}"
+                ),
             },
             timeout=10,
         )
+
         response.raise_for_status()
+
         rows = response.json()
 
         if not rows:
+
             logging.info(
-                "[PROGRESS] لا يوجد سجل بعد؛ البدء من الصفحة %s.",
+                "[PROGRESS] لا يوجد سجل تقدم؛ "
+                "البدء من الصفحة %s.",
                 START_PAGE,
             )
+
             return fallback
 
         row = rows[0]
+
         return {
-            "next_page": int(row["next_page"]),
-            "finished": bool(row["finished"]),
+            "next_page": int(
+                row["next_page"]
+            ),
+            "finished": bool(
+                row["finished"]
+            ),
         }
 
     except Exception as e:
+
         logging.error(
-            "[PROGRESS] خطأ في قراءة التقدم من Supabase: %s", e
+            "[PROGRESS] فشل قراءة التقدم: %s",
+            e,
         )
+
         return fallback
 
 
 # ==========================================
-# حفظ التقدم (في Supabase)
+# حفظ تقدم المجلة
 # ==========================================
 
 def save_progress(
     next_page: int,
     finished: bool = False,
 ):
-    """Persist the bot's progress to Supabase via upsert."""
 
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        logging.error(
-            "[PROGRESS] لا يمكن الحفظ: SUPABASE_URL أو SUPABASE_ANON_KEY غير موجود."
+    if (
+        not SUPABASE_URL
+        or not SUPABASE_ANON_KEY
+    ):
+
+        logging.warning(
+            "[PROGRESS] لا يمكن حفظ التقدم؛ "
+            "Supabase غير مضبوط."
         )
+
         return
 
     payload = {
@@ -149,22 +216,39 @@ def save_progress(
     }
 
     with _sync_lock:
+
         try:
+
             response = requests.post(
                 f"{SUPABASE_URL}/rest/v1/magazine_progress",
                 headers={
                     "apikey": SUPABASE_ANON_KEY,
-                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates",
+                    "Authorization": (
+                        f"Bearer {SUPABASE_ANON_KEY}"
+                    ),
+                    "Content-Type": (
+                        "application/json"
+                    ),
+                    "Prefer": (
+                        "resolution=merge-duplicates"
+                    ),
                 },
                 json=payload,
                 timeout=10,
             )
+
             response.raise_for_status()
+
+            logging.info(
+                "[PROGRESS] تم حفظ التقدم: الصفحة القادمة %s",
+                next_page,
+            )
+
         except Exception as e:
+
             logging.error(
-                "[PROGRESS] خطأ في حفظ التقدم إلى Supabase: %s", e
+                "[PROGRESS] فشل حفظ التقدم: %s",
+                e,
             )
 
 
@@ -179,8 +263,9 @@ def render_page(
     if not os.path.isfile(
         MAGAZINE_PATH
     ):
+
         raise FileNotFoundError(
-            f"لم يتم العثور على ملف المجلة: "
+            "لم يتم العثور على ملف المجلة: "
             f"{MAGAZINE_PATH}"
         )
 
@@ -190,14 +275,18 @@ def render_page(
 
     try:
 
-        total_pages = len(document)
+        total_pages = len(
+            document
+        )
 
         if page_number < 1:
+
             raise ValueError(
                 "رقم الصفحة غير صحيح."
             )
 
         if page_number > total_pages:
+
             raise EOFError(
                 "انتهت صفحات المجلة."
             )
@@ -223,8 +312,8 @@ def render_page(
         )
 
         logging.info(
-            f"[MAGAZINE] تم تحويل الصفحة "
-            f"{page_number} إلى صورة."
+            "[MAGAZINE] تم تحويل الصفحة %s إلى صورة.",
+            page_number,
         )
 
         return image_bytes
@@ -235,39 +324,132 @@ def render_page(
 
 
 # ==========================================
-# استخراج النص من الصورة
+# تنظيف النص المستخرج
+# ==========================================
+
+def clean_extracted_text(
+    text: str,
+) -> str:
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # إزالة Markdown الذي قد يضيفه النموذج.
+    text = re.sub(
+        r"```.*?```",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+
+    text = text.replace(
+        "**",
+        "",
+    )
+
+    text = text.replace(
+        "__",
+        "",
+    )
+
+    # حذف بعض العبارات التي تدل على أن النموذج
+    # بدأ يتحدث بدلاً من نسخ النص.
+    forbidden_prefixes = [
+        "here is",
+        "here's",
+        "here is the text",
+        "the text is",
+        "transcription:",
+        "ocr:",
+        "sure",
+        "certainly",
+        "النص المستخرج:",
+        "إليك النص:",
+        "هذا هو النص:",
+    ]
+
+    lines = []
+
+    for line in text.splitlines():
+
+        stripped = line.strip()
+
+        if not stripped:
+            lines.append("")
+            continue
+
+        lower_line = stripped.lower()
+
+        if any(
+            lower_line.startswith(prefix)
+            for prefix in forbidden_prefixes
+        ):
+            continue
+
+        lines.append(
+            stripped
+        )
+
+    text = "\n".join(
+        lines
+    ).strip()
+
+    return text
+
+
+# ==========================================
+# استخراج النص من الصورة عبر Groq Vision
 # ==========================================
 
 def extract_text_sync(
     image_bytes: bytes,
 ) -> str:
-    import time
 
     if not groq_client:
+
         raise RuntimeError(
             "GROQ_API_KEY غير موجود."
         )
 
     encoded_image = base64.b64encode(
         image_bytes
-    ).decode("utf-8")
+    ).decode(
+        "utf-8"
+    )
 
-    # قائمة بالنماذج المتاحة الحديثة والمدعومة للرؤية والنصوص
+    # النموذج الحالي للرؤية.
     models_to_try = [
         GROQ_VISION_MODEL,
-        "llama-3.2-11b-vision",
-        "llama-3.3-70b-versatile"
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen/qwen3.6-27b",
     ]
-    
-    # إزالة التكرارات مع الحفاظ على الترتيب
+
+    # إزالة التكرارات.
     seen = set()
-    models_to_try = [m for m in models_to_try if m and not (m in seen or seen.add(m))]
+
+    models_to_try = [
+        model
+        for model in models_to_try
+        if model
+        and not (
+            model in seen
+            or seen.add(model)
+        )
+    ]
 
     last_exception = None
 
     for model in models_to_try:
+
         try:
-            logging.info(f"[GROQ] محاولة استخراج النص باستخدام النموذج: {model}")
+
+            logging.info(
+                "[GROQ] استخراج النص باستخدام: %s",
+                model,
+            )
+
             response = (
                 groq_client
                 .chat
@@ -281,17 +463,25 @@ def extract_text_sync(
                                 {
                                     "type": "text",
                                     "text": (
-                                        "استخرج النص العربي "
-                                        "الموجود في هذه الصفحة "
-                                        "كما هو تماماً.\n\n"
-                                        "مهم جداً:\n"
-                                        "- لا تلخص.\n"
-                                        "- لا تعيد صياغة.\n"
-                                        "- لا تضف أي كلام من عندك.\n"
-                                        "- حافظ على ترتيب الفقرات "
-                                        "والعناوين قدر الإمكان.\n"
-                                        "- لا تكتب وصفاً للصورة.\n"
-                                        "- أعد النص فقط."
+                                        "مهمتك الوحيدة هي نسخ "
+                                        "النص الموجود داخل صورة "
+                                        "صفحة المجلة.\n\n"
+
+                                        "قواعد صارمة جداً:\n"
+                                        "1. انسخ النص الموجود في "
+                                        "الصورة فقط.\n"
+                                        "2. ممنوع التأليف أو "
+                                        "التخمين أو التلخيص.\n"
+                                        "3. ممنوع كتابة مقدمة أو "
+                                        "شرح أو تعليق.\n"
+                                        "4. ممنوع كتابة أي جملة "
+                                        "مثل Here is أو The text is.\n"
+                                        "5. لا تضف أي نص غير موجود "
+                                        "في الصورة.\n"
+                                        "6. حافظ على النص العربي "
+                                        "وترتيب الفقرات قدر الإمكان.\n"
+                                        "7. أعد النص المنسوخ فقط "
+                                        "بدون أي كلام إضافي."
                                     ),
                                 },
                                 {
@@ -307,7 +497,7 @@ def extract_text_sync(
                         }
                     ],
                     temperature=0,
-                    max_completion_tokens=4000, # تقليل السقف لمنع استنزاف وتخطي حدود التوكنز المفاجئة
+                    max_completion_tokens=4000,
                 )
             )
 
@@ -319,24 +509,37 @@ def extract_text_sync(
                 or ""
             )
 
-            if text.strip():
-                return text.strip()
+            text = clean_extracted_text(
+                text
+            )
+
+            if text:
+
+                logging.info(
+                    "[GROQ] تم استخراج نص الصفحة بنجاح."
+                )
+
+                return text
 
         except Exception as e:
-            logging.warning(f"[GROQ] فشل الاستخراج باستخدام النموذج {model}: {e}")
+
+            logging.warning(
+                "[GROQ] فشل النموذج %s: %s",
+                model,
+                e,
+            )
+
             last_exception = e
-            # التهدئة والنوم البرمجي لمنع الحظر الفوري عند الانتقال للنموذج البديل
-            logging.info("[GROQ] الانتظار لمدة 5 ثوانٍ لتهدئة الطلبات قبل الانتقال للنموذج التالي...")
-            time.sleep(5)
 
     if last_exception:
+
         raise last_exception
 
     return ""
 
 
 # ==========================================
-# استخراج النص بشكل Async
+# استخراج النص Async
 # ==========================================
 
 async def extract_text(
@@ -354,38 +557,85 @@ async def extract_text(
 
 
 # ==========================================
-# إنشاء النص النهائي للمنشور
+# بناء منشور الصورة
 # ==========================================
 
-def build_text(
+def build_caption(
     page_number: int,
     extracted_text: str,
 ) -> str:
 
-    parts = [
-        f"📖 {MAGAZINE_TITLE}",
-        f"الصفحة {page_number}",
-        "",
-        extracted_text.strip(),
-    ]
+    # الختم والرابط ثابتان ولا يأتيان من النموذج.
+    footer = (
+        "\n\n"
+        "❤️ بقية تكملة نص الصفحة يوجد في صورة المجلة"
+        "\n"
+        f"{CHANNEL_FOOTER}"
+    )
 
-    if CHANNEL_LINK:
-        parts.extend(
-            [
-                "",
-                "────────────",
-                CHANNEL_LINK,
-            ]
+    header = (
+        f"📖 {MAGAZINE_TITLE}"
+        f"\n"
+        f"الصفحة {page_number}"
+        f"\n\n"
+    )
+
+    # Telegram يسمح بحد أقصى 1024 حرفاً للكابشن.
+    # نحن نستهدف 1000 حرف كحد أقصى للمنشور كاملاً.
+    available_for_text = (
+        MAX_POST_LENGTH
+        - len(header)
+        - len(footer)
+    )
+
+    if available_for_text < 0:
+        available_for_text = 0
+
+    text = extracted_text.strip()
+
+    # نحاول ألا نقطع كلمة في منتصفها.
+    if len(text) > available_for_text:
+
+        candidate = text[
+            :available_for_text
+        ]
+
+        last_space = max(
+            candidate.rfind(" "),
+            candidate.rfind("\n"),
         )
 
-    return "\n".join(parts)
+        if last_space > 0:
+
+            candidate = candidate[
+                :last_space
+            ]
+
+        text = candidate.strip()
+
+    caption = (
+        header
+        + text
+        + footer
+    )
+
+    # حماية نهائية.
+    if len(caption) > MAX_POST_LENGTH:
+
+        caption = caption[
+            :MAX_POST_LENGTH
+        ]
+
+    return caption
 
 
 # ==========================================
-# نشر الصفحة التالية (نسخة دمج النص مع الصورة + تقسيم الباقي)
+# نشر الصفحة التالية
 # ==========================================
 
-async def publish_next_page(bot):
+async def publish_next_page(
+    bot,
+):
 
     async with _publish_lock:
 
@@ -404,107 +654,76 @@ async def publish_next_page(bot):
         ]
 
         logging.info(
-            f"[MAGAZINE] بدء تجهيز الصفحة "
-            f"{page_number}..."
+            "[MAGAZINE] تجهيز الصفحة %s...",
+            page_number,
         )
 
         try:
+
+            # ----------------------------------
+            # 1. تحويل الصفحة إلى صورة
+            # ----------------------------------
 
             image_bytes = await asyncio.to_thread(
                 render_page,
                 page_number,
             )
 
+            # ----------------------------------
+            # 2. استخراج النص الحقيقي
+            # ----------------------------------
+
             logging.info(
-                f"[MAGAZINE] استخراج نص الصفحة "
-                f"{page_number}..."
+                "[MAGAZINE] استخراج نص الصفحة %s...",
+                page_number,
             )
 
-            extracted_text = (
-                await extract_text(
-                    image_bytes
-                )
+            extracted_text = await extract_text(
+                image_bytes
             )
 
             if not extracted_text:
 
                 raise RuntimeError(
-                    "Groq لم يعثر على نص في الصفحة."
+                    "لم يتم استخراج أي نص من الصفحة."
                 )
 
-            logging.info(
-                f"[MAGAZINE] تم استخراج النص "
-                f"للصفحة {page_number}."
-            )
+            # ----------------------------------
+            # 3. بناء الكابشن
+            # ----------------------------------
 
-            final_text = build_text(
+            caption = build_caption(
                 page_number,
                 extracted_text,
             )
 
-            # --- الحساب الذكي والتقسيم بناءً على قيود تليجرام ---
-            MAX_CAPTION_LENGTH = 1000  # الحد الأقصى الآمن لوصف الصورة (تليجرام يسمح بـ 1024)
-            MAX_MESSAGE_LENGTH = 4000  # الحد الأقصى الآمن للرسالة النصية العادية (تليجرام يسمح بـ 4096)
+            logging.info(
+                "[MAGAZINE] طول المنشور النهائي: %s حرف.",
+                len(caption),
+            )
 
-            # إذا كان النص الكلي يناسب وصف الصورة بالكامل دون مشاكل
-            if len(final_text) <= MAX_CAPTION_LENGTH:
-                logging.info(f"[MAGAZINE] نشر الصفحة {page_number} مع كامل النص في وصف الصورة...")
-                await bot.send_photo(
-                    chat_id=CHANNEL_USERNAME,
-                    photo=image_bytes,
-                    caption=final_text,
-                )
-            else:
-                logging.info(f"[MAGAZINE] النص طويل؛ سيتم إرفاق جزء مع الصورة وتقسيم المتبقي...")
-                
-                # استقطاع الجزء الأول الخاص بوصف الصورة مع مراعاة عدم قطع الكلمات
-                caption_part = final_text[:MAX_CAPTION_LENGTH]
-                # نرجع للخلف حتى نجد آخر مسافة أو سطر جديد لكي لا تنقطع الكلمة في المنتصف
-                last_space = max(caption_part.rfind(' '), caption_part.rfind('\n'))
-                if last_space > 500:  # للتأكد من عدم الرجوع لمسافة بعيدة جداً
-                    caption_part = final_text[:last_space]
-                
-                # النص المتبقي الذي سيتم توزيعه على رسائل منفصلة
-                remaining_text = final_text[len(caption_part):].strip()
+            # ----------------------------------
+            # 4. نشر الصورة + النص في منشور واحد
+            # ----------------------------------
 
-                # 1. إرسال المنشور الأول: الصورة ومرفق معها الجزء الأول من النص
-                await bot.send_photo(
-                    chat_id=CHANNEL_USERNAME,
-                    photo=image_bytes,
-                    caption=caption_part + "\n\n⬇️ التكملة في الرسالة التالية...",
-                )
+            await bot.send_photo(
+                chat_id=CHANNEL_USERNAME,
+                photo=image_bytes,
+                caption=caption,
+            )
 
-                # 2. تقسيم وإرسال النص المتبقي في رسائل عادية
-                if remaining_text:
-                    lines = remaining_text.split('\n')
-                    current_chunk = ""
-                    part_number = 1
-                    
-                    for line in lines:
-                        # إذا أضيفت السلسلة الحالية وتخطت الحد، نرسل الجزء المجهز أولاً
-                        if len(current_chunk) + len(line) + 1 > MAX_MESSAGE_LENGTH:
-                            chunk_suffix = f"\n\n(تابع صفحة {page_number} - جزء {part_number})"
-                            await bot.send_message(
-                                chat_id=CHANNEL_USERNAME,
-                                text=current_chunk + chunk_suffix,
-                            )
-                            current_chunk = line
-                            part_number += 1
-                        else:
-                            if current_chunk:
-                                current_chunk += "\n" + line
-                            else:
-                                current_chunk = line
-                    
-                    # إرسال الجزء الأخير المتبقي
-                    if current_chunk:
-                        chunk_suffix = f"\n\n(تابع صفحة {page_number} - الجزء الأخير)" if part_number > 1 else ""
-                        await bot.send_message(
-                            chat_id=CHANNEL_USERNAME,
-                            text=current_chunk + chunk_suffix,
-                        )
+            logging.info(
+                "[MAGAZINE] تم نشر الصفحة %s بنجاح.",
+                page_number,
+            )
 
-            document = fitz.open(MAGAZINE_PATH)
+            # ----------------------------------
+            # 5. معرفة عدد صفحات المجلة
+            # ----------------------------------
+
+            document = fitz.open(
+                MAGAZINE_PATH
+            )
 
             try:
 
@@ -516,6 +735,10 @@ async def publish_next_page(bot):
 
                 document.close()
 
+            # ----------------------------------
+            # 6. حفظ الصفحة التالية
+            # ----------------------------------
+
             if page_number >= total_pages:
 
                 save_progress(
@@ -524,8 +747,7 @@ async def publish_next_page(bot):
                 )
 
                 logging.info(
-                    "[MAGAZINE] تم نشر آخر صفحة "
-                    "وانتهت المجلة."
+                    "[MAGAZINE] تم نشر آخر صفحة."
                 )
 
             else:
@@ -536,10 +758,8 @@ async def publish_next_page(bot):
                 )
 
                 logging.info(
-                    f"[MAGAZINE] تم نشر الصفحة "
-                    f"{page_number} بنجاح. "
-                    f"الصفحة القادمة: "
-                    f"{page_number + 1}"
+                    "[MAGAZINE] الصفحة القادمة: %s",
+                    page_number + 1,
                 )
 
             return True
@@ -554,16 +774,15 @@ async def publish_next_page(bot):
             logging.info(
                 "[MAGAZINE] لا توجد صفحات أخرى."
             )
+
             return True
 
         except Exception as e:
 
             logging.exception(
-                f"[MAGAZINE] فشل نشر الصفحة "
-                f"{page_number}: {e}"
+                "[MAGAZINE] فشل نشر الصفحة %s: %s",
+                page_number,
+                e,
             )
-            
-            logging.info("[MAGAZINE] سيتم النوم مؤقتاً لمدة 60 ثانية قبل السماح بأي محاولة نشر جديدة...")
-            await asyncio.sleep(60)
 
             return False
