@@ -1,0 +1,4 @@
+git apply mushtaqoon-fix.patch
+git add config.py Procfile
+git commit -m "fix: use valid Groq vision model + add Procfile for Railway"
+git push origin main
