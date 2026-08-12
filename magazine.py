@@ -4,6 +4,7 @@ import base64
 import asyncio
 import logging
 import threading
+import glob
 
 import fitz
 from groq import Groq
@@ -46,10 +47,33 @@ groq_client = (
 # مسار ملف المجلة
 # ==========================================
 
-MAGAZINE_PATH = os.path.join(
-    MAGAZINE_DIR,
-    MAGAZINE_FILE,
-)
+def resolve_magazine_path() -> str:
+    """Resolve the PDF even when Railway supplies a relative/full path."""
+    configured_path = os.path.expanduser(MAGAZINE_FILE.strip())
+    candidates = [configured_path]
+
+    if not os.path.isabs(configured_path):
+        candidates.insert(0, os.path.join(MAGAZINE_DIR, configured_path))
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    # A Unicode filename copied into Railway can contain a different
+    # normalization or an invisible character. If there is one PDF in the
+    # configured directory, use it rather than failing on a false mismatch.
+    pdf_files = sorted(glob.glob(os.path.join(MAGAZINE_DIR, "*.pdf")))
+    if len(pdf_files) == 1:
+        logging.warning(
+            "[MAGAZINE] MAGAZINE_FILE did not match exactly; using %s",
+            pdf_files[0],
+        )
+        return pdf_files[0]
+
+    return candidates[0]
+
+
+MAGAZINE_PATH = resolve_magazine_path()
 
 
 # ==========================================
@@ -362,7 +386,7 @@ async def publish_next_page(bot):
                 "[MAGAZINE] انتهت المجلة بالكامل."
             )
 
-            return
+            return True
 
         page_number = progress[
             "next_page"
@@ -446,9 +470,7 @@ async def publish_next_page(bot):
             # معرفة عدد الصفحات
             # ==================================
 
-            document = fitz.open(
-                MAGAZINE_PATH
-            )
+            document = fitz.open(MAGAZINE_PATH)
 
             try:
 
@@ -490,6 +512,8 @@ async def publish_next_page(bot):
                     f"{page_number + 1}"
                 )
 
+            return True
+
         except EOFError:
 
             save_progress(
@@ -500,6 +524,7 @@ async def publish_next_page(bot):
             logging.info(
                 "[MAGAZINE] لا توجد صفحات أخرى."
             )
+            return True
 
         except Exception as e:
 
@@ -510,4 +535,4 @@ async def publish_next_page(bot):
 
             # لا يتم تغيير رقم الصفحة عند الفشل.
             # ستتم إعادة محاولة نفس الصفحة لاحقاً.
-            return
+            return False

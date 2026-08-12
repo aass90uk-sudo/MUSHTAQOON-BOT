@@ -10,24 +10,19 @@ except ImportError:
 # Telegram
 # ==========================================
 
-TELEGRAM_TOKEN = os.getenv(
-    "TELEGRAM_TOKEN",
-    "",
-)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 
-CHANNEL_USERNAME = os.getenv(
-    "CHANNEL_USERNAME",
-    "",
-)
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip()
+if CHANNEL_USERNAME.startswith("https://t.me/"):
+    CHANNEL_USERNAME = CHANNEL_USERNAME.removeprefix("https://t.me/").strip("/")
+if CHANNEL_USERNAME and not CHANNEL_USERNAME.startswith("@") and not CHANNEL_USERNAME.lstrip("-").isdigit():
+    CHANNEL_USERNAME = f"@{CHANNEL_USERNAME}"
 
 # ==========================================
 # Groq
 # ==========================================
 
-GROQ_API_KEY = os.getenv(
-    "GROQ_API_KEY",
-    "",
-)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 GROQ_VISION_MODEL = os.getenv(
     "GROQ_VISION_MODEL",
@@ -38,15 +33,9 @@ GROQ_VISION_MODEL = os.getenv(
 # ملف المجلة
 # ==========================================
 
-MAGAZINE_FILE = os.getenv(
-    "MAGAZINE_FILE",
-    "المشتاقون_إلى_الجنة.pdf",
-)
+MAGAZINE_FILE = os.getenv("MAGAZINE_FILE", "المشتاقون_إلى_الجنة.pdf").strip()
 
-MAGAZINE_DIR = os.getenv(
-    "MAGAZINE_DIR",
-    "magazine_pdf",
-)
+MAGAZINE_DIR = os.getenv("MAGAZINE_DIR", "magazine_pdf").strip()
 
 # ==========================================
 # صفحة بداية النشر
