@@ -7,6 +7,15 @@ except ImportError:
     pass
 
 # ==========================================
+# Supabase (من .env)
+# ==========================================
+# ملاحظة: متغيرات Supabase تأتي من ملف .env تلقائياً
+# نحتفظ بنسخة منها هنا للاستخدام في magazine.py
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")).strip()
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("VITE_SUPABASE_ANON_KEY", "")).strip()
+
+# ==========================================
 # Telegram
 # ==========================================
 
@@ -25,10 +34,10 @@ if CHANNEL_USERNAME and not CHANNEL_USERNAME.startswith("@") and not CHANNEL_USE
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# تم اعتماد النموذج المستقر للرؤية
+# تم اعتماد النموذج الحالي للرؤية من Groq (النموذج السابق llama-3.2-11b-vision-preview متوقف)
 GROQ_VISION_MODEL = os.getenv(
-    "GROQ_VISION_MODEL", 
-    "llama-3.2-11b-vision-preview"
+    "GROQ_VISION_MODEL",
+    "qwen/qwen3.6-27b",
 ).strip()
 
 # ==========================================
@@ -50,13 +59,6 @@ START_PAGE = int(
         "9",
     )
 )
-
-# ==========================================
-# مكان حفظ تقدم المجلة (Supabase)
-# ==========================================
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")).strip()
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("VITE_SUPABASE_ANON_KEY", "")).strip()
 
 # ==========================================
 # جودة تحويل PDF إلى صورة
