@@ -1,27 +1,38 @@
-# ==========================================
-# إنشاء نص المنشور
-# ==========================================
+import asyncio
+import logging
+import fitz  # PyMuPDF
 
+# الثوابت المحددة بناءً على طلبك
+MAGAZINE_TITLE = "مجلة المشتاقون إلى الجنة"
+CHANNEL_USERNAME = "@Athar_Dz_Islamic"
+MAX_CAPTION_LENGTH = 1000
+
+# قفل الأمان لمنع تداخل عمليات النشر المتزامنة
+_publish_lock = asyncio.Lock()
+
+# ==========================================
+# إنشاء نص المنشور وضمان الأمان للأطوال
+# ==========================================
 def build_text(
     page_number: int,
     extracted_text: str,
 ) -> str:
-
-    # الحد الأقصى الذي نريده للمنشور كاملاً
-    MAX_CAPTION_LENGTH = 1000
-
+    """
+    بناء نص المنشور وضمان عدم تخطي الحد الأقصى للحروف (1000 حرف).
+    يتم اقتطاع النص الحقيقي المستخرج من نهاية آخر كلمة كاملة وتذييله بالخاتمة.
+    """
     # الختم والرابط جزء من الـ 1000 حرف
     footer = (
         "بقية تكملة نص الصفحة يوجد في صورة المجلة❤️\n\n"
-        "@Athar_Dz_Islamic"
+        f"{CHANNEL_USERNAME}"
     )
 
     header = (
         f"📖 {MAGAZINE_TITLE}\n"
-        f"الصفحة {page_number}\n\n"
+        f"الصفحة رقم {page_number}\n\n"
     )
 
-    # تنظيف النص المستخرج فقط
+    # تنظيف النص المستخرج فقط لمنع تشوه التنسيق
     text = (
         extracted_text
         .strip()
@@ -29,26 +40,22 @@ def build_text(
         .replace("\r", "\n")
     )
 
-    # المساحة المتبقية للنص الحقيقي
+    # المساحة الصافية المتبقية للنص الحقيقي
     available_length = (
         MAX_CAPTION_LENGTH
         - len(header)
         - len(footer)
-        - 2
+        - 2  # الأسطر الفاصلة المضافة عند دمج المكونات
     )
 
     if available_length < 0:
-        raise ValueError(
-            "العنوان والختم والرابط يتجاوزون حد 1000 حرف."
-        )
+        raise ValueError("العنوان والختم والرابط يتجاوزون حد 1000 حرف.")
 
-    # إذا كان النص أطول من المساحة المتاحة
-    # نأخذ أكبر قدر ممكن منه دون تجاوز 1000 حرف
+    # إذا كان النص أطول من المساحة المتاحة، نأخذ أكبر قدر ممكن منه
     if len(text) > available_length:
-
         text_part = text[:available_length]
 
-        # عدم قطع الكلمة في منتصفها
+        # تلافي قطع الكلمة في منتصفها (البحث عن آخر مسافة أو سطر جديد)
         last_space = max(
             text_part.rfind(" "),
             text_part.rfind("\n"),
@@ -56,7 +63,6 @@ def build_text(
 
         if last_space > 0:
             text_part = text_part[:last_space].rstrip()
-
     else:
         text_part = text
 
@@ -67,104 +73,67 @@ def build_text(
         + footer
     )
 
-    # حماية نهائية: يجب ألا يتجاوز المنشور 1000 حرف
+    # حماية إسعافية نهائية صارمة لضمان السلامة المطلقة في الحالات الاستثنائية
     if len(final_text) > MAX_CAPTION_LENGTH:
-
-        overflow = (
-            len(final_text)
-            - MAX_CAPTION_LENGTH
-        )
-
-        text_part = text_part[
-            :max(0, len(text_part) - overflow)
-        ].rstrip()
-
-        final_text = (
-            header
-            + text_part
-            + "\n\n"
-            + footer
-        )
+        allowed_text_len = MAX_CAPTION_LENGTH - len(header) - len(footer) - 2
+        text_part = text_part[:allowed_text_len]
+        last_space = max(text_part.rfind(" "), text_part.rfind("\n"))
+        if last_space > 0:
+            text_part = text_part[:last_space].rstrip()
+        final_text = f"{header}{text_part}\n\n{footer}"
 
     logging.info(
-        f"[MAGAZINE] طول منشور الصفحة "
-        f"{page_number}: {len(final_text)} حرف."
+        f"[MAGAZINE] طول منشور الصفحة {page_number}: {len(final_text)} حرف."
     )
 
     return final_text
 
 
 # ==========================================
-# نشر الصفحة التالية
+# نشر الصفحة التالية وإدارة التقدم
 # ==========================================
-
 async def publish_next_page(bot):
-
+    """
+    تقوم بجلب الصفحة الحالية، تحويلها لصورة، استخراج نصها الحقيقي،
+    نشرها في التليجرام (صورة + نص)، ثم تحديث حالة التقدم في قاعدة البيانات.
+    """
     async with _publish_lock:
-
+        # قراءة التقدم الحالي (يتم استيرادها أو قراءتها من سياق المشروع لديك)
         progress = load_progress()
 
         if progress["finished"]:
-
-            logging.info(
-                "[MAGAZINE] انتهت المجلة بالكامل."
-            )
-
+            logging.info("[MAGAZINE] انتهت المجلة بالكامل.")
             return True
 
-        page_number = progress[
-            "next_page"
-        ]
-
-        logging.info(
-            f"[MAGAZINE] بدء تجهيز الصفحة "
-            f"{page_number}..."
-        )
+        page_number = progress["next_page"]
+        logging.info(f"[MAGAZINE] بدء تجهيز الصفحة {page_number}...")
 
         try:
-
             # ==================================
             # تحويل الصفحة إلى صورة
             # ==================================
-
             image_bytes = await asyncio.to_thread(
                 render_page,
                 page_number,
             )
 
-            logging.info(
-                f"[MAGAZINE] تم تجهيز صورة الصفحة "
-                f"{page_number}."
-            )
+            logging.info(f"[MAGAZINE] تم تجهيز صورة الصفحة {page_number}.")
 
             # ==================================
             # استخراج النص الحقيقي من الصورة
             # ==================================
+            logging.info(f"[MAGAZINE] استخراج نص الصفحة {page_number}...")
 
-            logging.info(
-                f"[MAGAZINE] استخراج نص الصفحة "
-                f"{page_number}..."
-            )
-
-            extracted_text = await extract_text(
-                image_bytes
-            )
+            extracted_text = await extract_text(image_bytes)
 
             if not extracted_text:
+                raise RuntimeError("فشل نظام الـ OCR في استخراج نص من الصفحة.")
 
-                raise RuntimeError(
-                    "Groq لم يعثر على نص في الصفحة."
-                )
-
-            logging.info(
-                f"[MAGAZINE] تم استخراج النص "
-                f"للصفحة {page_number}."
-            )
+            logging.info(f"[MAGAZINE] تم استخراج النص للصفحة {page_number}.")
 
             # ==================================
-            # إنشاء المنشور النهائي
+            # إنشاء كابتشن المنشور النهائي
             # ==================================
-
             final_text = build_text(
                 page_number,
                 extracted_text,
@@ -173,11 +142,7 @@ async def publish_next_page(bot):
             # ==================================
             # نشر الصورة + النص في منشور واحد
             # ==================================
-
-            logging.info(
-                f"[MAGAZINE] نشر الصفحة "
-                f"{page_number} مع الصورة والنص..."
-            )
+            logging.info(f"[MAGAZINE] نشر الصفحة {page_number} مع الصورة والنص...")
 
             await bot.send_photo(
                 chat_id=CHANNEL_USERNAME,
@@ -185,85 +150,50 @@ async def publish_next_page(bot):
                 caption=final_text,
             )
 
-            logging.info(
-                f"[MAGAZINE] تم نشر الصفحة "
-                f"{page_number} بنجاح."
-            )
+            logging.info(f"[MAGAZINE] تم نشر الصفحة {page_number} بنجاح.")
 
             # ==================================
-            # معرفة عدد صفحات المجلة
+            # معرفة عدد صفحات المجلة الكلي من ملف الـ PDF
             # ==================================
-
-            document = fitz.open(
-                MAGAZINE_PATH
-            )
-
+            document = fitz.open(MAGAZINE_PATH)
             try:
-
-                total_pages = len(
-                    document
-                )
-
+                total_pages = len(document)
             finally:
-
                 document.close()
 
             # ==================================
-            # حفظ التقدم
+            # التحقق وحفظ التقدم في Supabase
             # ==================================
-
-            if page_number >= total_pages:
-
-                save_progress(
-                    next_page=page_number + 1,
-                    finished=True,
-                )
-
-                logging.info(
-                    "[MAGAZINE] تم نشر آخر صفحة "
-                    "وانتهت المجلة بالكامل."
-                )
-
+            is_finished = page_number >= total_pages
+            
+            if is_finished:
+                next_page_num = page_number  # تثبيت العداد عند الصفحة الأخيرة لأنها انتهت
+                log_msg = f"[MAGAZINE] تم نشر آخر صفحة ({page_number}) وانتهت المجلة بالكامل."
             else:
+                next_page_num = page_number + 1
+                log_msg = f"[MAGAZINE] تم حفظ التقدم. الصفحة القادمة: {next_page_num}"
 
-                save_progress(
-                    next_page=page_number + 1,
-                    finished=False,
-                )
-
-                logging.info(
-                    f"[MAGAZINE] تم حفظ التقدم. "
-                    f"الصفحة القادمة: "
-                    f"{page_number + 1}"
-                )
+            # تحديث قاعدة البيانات باستدعاء موحد
+            save_progress(
+                next_page=next_page_num,
+                finished=is_finished,
+            )
+            logging.info(log_msg)
 
             return True
 
         except EOFError:
-
+            # حماية احتياطية عند الوصول لنهاية غير متوقعة لملف الـ PDF
             save_progress(
                 next_page=page_number,
                 finished=True,
             )
-
-            logging.info(
-                "[MAGAZINE] لا توجد صفحات أخرى."
-            )
-
+            logging.info("[MAGAZINE] لا توجد صفحات أخرى متوفرة في الملف.")
             return True
 
         except Exception as e:
-
-            logging.exception(
-                f"[MAGAZINE] فشل نشر الصفحة "
-                f"{page_number}: {e}"
-            )
-
-            logging.info(
-                "[MAGAZINE] سيتم الانتظار "
-                "60 ثانية قبل المحاولة التالية..."
-            )
-
+            logging.exception(f"[MAGAZINE] فشل نشر الصفحة {page_number}: {e}")
+            logging.info("[MAGAZINE] سيتم الانتظار 60 ثانية قبل المحاولة التالية...")
             await asyncio.sleep(60)
-
             return False
+            
