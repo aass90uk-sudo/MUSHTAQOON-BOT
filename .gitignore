@@ -3,6 +3,5 @@ __pycache__/
 *.pyc
 data/
 attached_assets/
-magazine_pdf/
 *.tmp
 node_modules/
