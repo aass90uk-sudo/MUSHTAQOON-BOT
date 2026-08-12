@@ -31,7 +31,6 @@ GROQ_API_KEY = os.getenv(
     "",
 )
 
-# نموذج الرؤية واستخراج النص
 GROQ_VISION_MODEL = os.getenv(
     "GROQ_VISION_MODEL",
     "qwen/qwen3.6-27b",
@@ -50,6 +49,18 @@ MAGAZINE_FILE = os.getenv(
 MAGAZINE_DIR = os.getenv(
     "MAGAZINE_DIR",
     "magazine_pdf",
+)
+
+
+# ==========================================
+# صفحة بداية النشر
+# ==========================================
+
+START_PAGE = int(
+    os.getenv(
+        "START_PAGE",
+        "9",
+    )
 )
 
 
@@ -91,7 +102,7 @@ TIMEZONE = os.getenv(
 
 
 # ==========================================
-# عنوان المنشور
+# عنوان المجلة
 # ==========================================
 
 MAGAZINE_TITLE = os.getenv(
@@ -116,6 +127,10 @@ CHANNEL_LINK = os.getenv(
 
 print(
     f"[CONFIG] Magazine: {MAGAZINE_FILE}"
+)
+
+print(
+    f"[CONFIG] Start page: {START_PAGE}"
 )
 
 print(
