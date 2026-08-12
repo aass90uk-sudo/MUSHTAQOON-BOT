@@ -11,10 +11,21 @@ MAGAZINE_TITLE = "مجلة المشتاقون إلى الجنة"
 # قراءة اسم المستخدم أو استخدام القيمة الافتراضية إذا لم تتوفر
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@Athar_Dz_Islamic")
 
-# تصحيح مسار الملف بناءً على هيكلة المجلدات في الجيت هاب لديك:
-# اسم المجلد هو magazine.pdf وداخل الملف المشتاقون_إلى_الجنة.pdf
-DEFAULT_PATH = os.path.join("magazine.pdf", "المشتاقون_إلى_الجنة.pdf")
-MAGAZINE_PATH = os.environ.get("MAGAZINE_FILE", DEFAULT_PATH)
+# جلب القيمة القادمة من لوحة تحكم Railway
+raw_magazine_file = os.environ.get("MAGAZINE_FILE", "").strip()
+
+# بناء وتصحيح المسار برمجياً ليتجه إلى المجلد الصحيح في GitHub
+if not raw_magazine_file:
+    # إذا كان المتغير فارغاً، نتوجه للمسار الافتراضي
+    MAGAZINE_PATH = os.path.join("magazine.pdf", "المشتاقون_إلى_الجنة.pdf")
+elif "magazine.pdf" in raw_magazine_file:
+    # إذا كان اسم المجلد مكتوباً بالفعل في المتغير
+    MAGAZINE_PATH = raw_magazine_file
+else:
+    # الحل الذكي: إذا كان المتغير يحتوي على الاسم العربي فقط، ندمجه داخل المجلد
+    MAGAZINE_PATH = os.path.join("magazine.pdf", raw_magazine_file)
+
+logging.info(f"[MAGAZINE] المسار المعتمد للملف هو: {MAGAZINE_PATH}")
 
 MAX_CAPTION_LENGTH = 1000
 
@@ -207,4 +218,4 @@ async def publish_next_page(bot):
             logging.info("[MAGAZINE] سيتم الانتظار 60 ثانية قبل المحاولة التالية...")
             await asyncio.sleep(60)
             return False
-                
+        
