@@ -12,7 +12,8 @@ except ImportError:
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip()
+# تم تعيين اسم القناة الافتراضي
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@Athar_Dz_Islamic").strip()
 if CHANNEL_USERNAME.startswith("https://t.me/"):
     CHANNEL_USERNAME = CHANNEL_USERNAME.removeprefix("https://t.me/").strip("/")
 if CHANNEL_USERNAME and not CHANNEL_USERNAME.startswith("@") and not CHANNEL_USERNAME.lstrip("-").isdigit():
@@ -24,6 +25,7 @@ if CHANNEL_USERNAME and not CHANNEL_USERNAME.startswith("@") and not CHANNEL_USE
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
+# تم اعتماد النموذج المستقر للرؤية
 GROQ_VISION_MODEL = os.getenv(
     "GROQ_VISION_MODEL", 
     "llama-3.2-11b-vision-preview"
@@ -35,7 +37,7 @@ GROQ_VISION_MODEL = os.getenv(
 
 MAGAZINE_FILE = os.getenv("MAGAZINE_FILE", "المشتاقون_إلى_الجنة.pdf").strip()
 
-# المجلد الذي يحتوي على ملف الـ PDF
+# تم تعيين اسم المجلد المطابق لقائمة مستودع GitHub
 MAGAZINE_DIR = os.getenv("MAGAZINE_DIR", "magazine.pdf").strip()
 
 # ==========================================
