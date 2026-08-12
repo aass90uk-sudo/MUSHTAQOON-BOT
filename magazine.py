@@ -382,7 +382,7 @@ def build_text(
 
 
 # ==========================================
-# نشر الصفحة التالية
+# نشر الصفحة التالية (نسخة دمج النص مع الصورة + تقسيم الباقي)
 # ==========================================
 
 async def publish_next_page(bot):
@@ -442,20 +442,67 @@ async def publish_next_page(bot):
                 extracted_text,
             )
 
-            logging.info(
-                f"[MAGAZINE] نشر الصفحة "
-                f"{page_number}..."
-            )
+            # --- الحساب الذكي والتقسيم بناءً على قيود تليجرام ---
+            MAX_CAPTION_LENGTH = 1000  # الحد الأقصى الآمن لوصف الصورة (تليجرام يسمح بـ 1024)
+            MAX_MESSAGE_LENGTH = 4000  # الحد الأقصى الآمن للرسالة النصية العادية (تليجرام يسمح بـ 4096)
 
-            await bot.send_photo(
-                chat_id=CHANNEL_USERNAME,
-                photo=image_bytes,
-            )
+            # إذا كان النص الكلي يناسب وصف الصورة بالكامل دون مشاكل
+            if len(final_text) <= MAX_CAPTION_LENGTH:
+                logging.info(f"[MAGAZINE] نشر الصفحة {page_number} مع كامل النص في وصف الصورة...")
+                await bot.send_photo(
+                    chat_id=CHANNEL_USERNAME,
+                    photo=image_bytes,
+                    caption=final_text,
+                )
+            else:
+                logging.info(f"[MAGAZINE] النص طويل؛ سيتم إرفاق جزء مع الصورة وتقسيم المتبقي...")
+                
+                # استقطاع الجزء الأول الخاص بوصف الصورة مع مراعاة عدم قطع الكلمات
+                caption_part = final_text[:MAX_CAPTION_LENGTH]
+                # نرجع للخلف حتى نجد آخر مسافة أو سطر جديد لكي لا تنقطع الكلمة في المنتصف
+                last_space = max(caption_part.rfind(' '), caption_part.rfind('\n'))
+                if last_space > 500:  # للتأكد من عدم الرجوع لمسافة بعيدة جداً
+                    caption_part = final_text[:last_space]
+                
+                # النص المتبقي الذي سيتم توزيعه على رسائل منفصلة
+                remaining_text = final_text[len(caption_part):].strip()
 
-            await bot.send_message(
-                chat_id=CHANNEL_USERNAME,
-                text=final_text,
-            )
+                # 1. إرسال المنشور الأول: الصورة ومرفق معها الجزء الأول من النص
+                await bot.send_photo(
+                    chat_id=CHANNEL_USERNAME,
+                    photo=image_bytes,
+                    caption=caption_part + "\n\n⬇️ التكملة في الرسالة التالية...",
+                )
+
+                # 2. تقسيم وإرسال النص المتبقي في رسائل عادية
+                if remaining_text:
+                    lines = remaining_text.split('\n')
+                    current_chunk = ""
+                    part_number = 1
+                    
+                    for line in lines:
+                        # إذا أضيفت السلسلة الحالية وتخطت الحد، نرسل الجزء المجهز أولاً
+                        if len(current_chunk) + len(line) + 1 > MAX_MESSAGE_LENGTH:
+                            chunk_suffix = f"\n\n(تابع صفحة {page_number} - جزء {part_number})"
+                            await bot.send_message(
+                                chat_id=CHANNEL_USERNAME,
+                                text=current_chunk + chunk_suffix,
+                            )
+                            current_chunk = line
+                            part_number += 1
+                        else:
+                            if current_chunk:
+                                current_chunk += "\n" + line
+                            else:
+                                current_chunk = line
+                    
+                    # إرسال الجزء الأخير المتبقي
+                    if current_chunk:
+                        chunk_suffix = f"\n\n(تابع صفحة {page_number} - الجزء الأخير)" if part_number > 1 else ""
+                        await bot.send_message(
+                            chat_id=CHANNEL_USERNAME,
+                            text=current_chunk + chunk_suffix,
+                        )
 
             document = fitz.open(MAGAZINE_PATH)
 
@@ -516,7 +563,6 @@ async def publish_next_page(bot):
                 f"{page_number}: {e}"
             )
             
-            # في حال فشل النشر الكلي، نمنع حلقة التكرار الفورية بانتظار دقيقة كاملة لراحة السيرفر
             logging.info("[MAGAZINE] سيتم النوم مؤقتاً لمدة 60 ثانية قبل السماح بأي محاولة نشر جديدة...")
             await asyncio.sleep(60)
 
