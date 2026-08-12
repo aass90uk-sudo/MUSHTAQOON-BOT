@@ -25,8 +25,9 @@ if CHANNEL_USERNAME and not CHANNEL_USERNAME.startswith("@") and not CHANNEL_USE
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 GROQ_VISION_MODEL = os.getenv(
-    "GROQ_VISION_MODEL = llama-3.2-11b-vision-preview",
-)
+    "GROQ_VISION_MODEL", 
+    "llama-3.2-11b-vision-preview"
+).strip()
 
 # ==========================================
 # ملف المجلة
