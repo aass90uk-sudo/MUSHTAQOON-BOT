@@ -7,9 +7,9 @@ except ImportError:
     pass
 
 # ==========================================
-# Supabase (من .env)
+# Bolt Database (من .env)
 # ==========================================
-# ملاحظة: متغيرات Supabase تأتي من ملف .env تلقائياً
+# ملاحظة: متغيرات Bolt Database تأتي من ملف .env تلقائياً
 # نحتفظ بنسخة منها هنا للاستخدام في magazine.py
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")).strip()
@@ -78,7 +78,10 @@ PDF_DPI = int(
 TIMEZONE = os.getenv(
     "TIMEZONE",
     "Asia/Riyadh",
-)
+).strip()
+
+# عدد المحاولات الإضافية عند فشل النشر بسبب اتصال مؤقت
+PUBLISH_RETRIES = max(1, int(os.getenv("PUBLISH_RETRIES", "3")))
 
 # ==========================================
 # عنوان المجلة
