@@ -8,29 +8,26 @@ import fitz  # PyMuPDF
 # ==========================================
 MAGAZINE_TITLE = "مجلة المشتاقون إلى الجنة"
 
-# قراءة اسم المستخدم أو استخدام القيمة الافتراضية إذا لم تتوفر
+# قراءة اسم المستخدم من بيئة نظام لوحة تحكم Railway أو استخدام القيمة الافتراضية
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@Athar_Dz_Islamic")
 
-# جلب القيمة القادمة من لوحة تحكم Railway
+# جلب اسم الملف قادماً من لوحة تحكم Railway لتحديد المسار
 raw_magazine_file = os.environ.get("MAGAZINE_FILE", "").strip()
 
-# بناء وتصحيح المسار برمجياً ليتجه إلى المجلد الصحيح في GitHub
+# بناء المسار برمجياً ليتوجه بذكاء إلى داخل المجلد الصحيح المعروض في هيكلية GitHub لديك
 if not raw_magazine_file:
-    # إذا كان المتغير فارغاً، نتوجه للمسار الافتراضي
     MAGAZINE_PATH = os.path.join("magazine.pdf", "المشتاقون_إلى_الجنة.pdf")
 elif "magazine.pdf" in raw_magazine_file:
-    # إذا كان اسم المجلد مكتوباً بالفعل في المتغير
     MAGAZINE_PATH = raw_magazine_file
 else:
-    # الحل الذكي: إذا كان المتغير يحتوي على الاسم العربي فقط، ندمجه داخل المجلد
+    # ربط الملف العربي تلقائياً داخل المجلد لمنع خطأ FileNotFoundError
     MAGAZINE_PATH = os.path.join("magazine.pdf", raw_magazine_file)
-
-logging.info(f"[MAGAZINE] المسار المعتمد للملف هو: {MAGAZINE_PATH}")
 
 MAX_CAPTION_LENGTH = 1000
 
 # قفل الأمان لمنع تداخل عمليات النشر المتزامنة
 _publish_lock = asyncio.Lock()
+
 
 # ==========================================
 # إنشاء نص المنشور وضمان الأمان للأطوال
@@ -95,7 +92,7 @@ def build_text(
         + footer
     )
 
-    # حماية إسعافية نهائية صارمة لضمان السلامة المطلقة في الحالات الاستثنائية
+    # حماية إسعافية نهائية صارمة لضمان السلامة المطلقة في الحالات الاستثنائية دون قطع كلمات
     if len(final_text) > MAX_CAPTION_LENGTH:
         allowed_text_len = MAX_CAPTION_LENGTH - len(header) - len(footer) - 2
         text_part = text_part[:allowed_text_len]
@@ -112,7 +109,7 @@ def build_text(
 
 
 # ==========================================
-# نشر الصفحة التالية وإدارة التقدم
+# نشر الصفحة التالية وإدارة التقدم (تحديث مدمج)
 # ==========================================
 async def publish_next_page(bot):
     """
@@ -120,7 +117,6 @@ async def publish_next_page(bot):
     نشرها في التليجرام (صورة + نص)، ثم تحديث حالة التقدم في قاعدة البيانات.
     """
     async with _publish_lock:
-        # قراءة التقدم الحالي
         progress = load_progress()
 
         if progress["finished"]:
@@ -149,12 +145,12 @@ async def publish_next_page(bot):
             extracted_text = await extract_text(image_bytes)
 
             if not extracted_text:
-                raise RuntimeError("فشل نظام الـ OCR في استخراج نص من الصفحة.")
+                raise RuntimeError("Groq لم يعثر على نص في الصفحة.")
 
             logging.info(f"[MAGAZINE] تم استخراج النص للصفحة {page_number}.")
 
             # ==================================
-            # إنشاء كابتشن المنشور النهائي
+            # إنشاء المنشور النهائي
             # ==================================
             final_text = build_text(
                 page_number,
@@ -175,7 +171,7 @@ async def publish_next_page(bot):
             logging.info(f"[MAGAZINE] تم نشر الصفحة {page_number} بنجاح.")
 
             # ==================================
-            # معرفة عدد صفحات المجلة الكلي من ملف الـ PDF
+            # معرفة عدد صفحات المجلة
             # ==================================
             document = fitz.open(MAGAZINE_PATH)
             try:
@@ -184,33 +180,29 @@ async def publish_next_page(bot):
                 document.close()
 
             # ==================================
-            # التحقق وحفظ التقدم
+            # حفظ التقدم وثبات العدادات
             # ==================================
-            is_finished = page_number >= total_pages
-            
-            if is_finished:
-                next_page_num = page_number
-                log_msg = f"[MAGAZINE] تم نشر آخر صفحة ({page_number}) وانتهت المجلة بالكامل."
+            if page_number >= total_pages:
+                save_progress(
+                    next_page=page_number,  # تثبيت العداد لمنع تجاوز فهرس الصفحات مستقبلاً
+                    finished=True,
+                )
+                logging.info("[MAGAZINE] تم نشر آخر صفحة وانتهت المجلة بالكامل.")
             else:
-                next_page_num = page_number + 1
-                log_msg = f"[MAGAZINE] تم حفظ التقدم. الصفحة القادمة: {next_page_num}"
-
-            # تحديث قاعدة البيانات باستدعاء موحد
-            save_progress(
-                next_page=next_page_num,
-                finished=is_finished,
-            )
-            logging.info(log_msg)
+                save_progress(
+                    next_page=page_number + 1,
+                    finished=False,
+                )
+                logging.info(f"[MAGAZINE] تم حفظ التقدم. الصفحة القادمة: {page_number + 1}")
 
             return True
 
         except EOFError:
-            # حماية احتياطية عند الوصول لنهاية غير متوقعة لملف الـ PDF
             save_progress(
                 next_page=page_number,
                 finished=True,
             )
-            logging.info("[MAGAZINE] لا توجد صفحات أخرى متوفرة في الملف.")
+            logging.info("[MAGAZINE] لا توجد صفحات أخرى.")
             return True
 
         except Exception as e:
