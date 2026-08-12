@@ -251,58 +251,84 @@ def extract_text_sync(
         image_bytes
     ).decode("utf-8")
 
-    response = (
-        groq_client
-        .chat
-        .completions
-        .create(
-            model=GROQ_VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
+    # قائمة بالنماذج المتاحة للبدائل في حال فشل النموذج الرئيسي
+    models_to_try = [
+        GROQ_VISION_MODEL,
+        "llama-3.2-11b-vision-preview",
+        "llama-3.2-90b-vision-preview"
+    ]
+    
+    # إزالة التكرارات مع الحفاظ على الترتيب
+    seen = set()
+    models_to_try = [m for m in models_to_try if m and not (m in seen or seen.add(m))]
+
+    last_exception = None
+
+    for model in models_to_try:
+        try:
+            logging.info(f"[GROQ] محاولة استخراج النص باستخدام النموذج: {model}")
+            response = (
+                groq_client
+                .chat
+                .completions
+                .create(
+                    model=model,
+                    messages=[
                         {
-                            "type": "text",
-                            "text": (
-                                "استخرج النص العربي "
-                                "الموجود في هذه الصفحة "
-                                "كما هو تماماً.\n\n"
-                                "مهم جداً:\n"
-                                "- لا تلخص.\n"
-                                "- لا تعيد صياغة.\n"
-                                "- لا تضف أي كلام من عندك.\n"
-                                "- حافظ على ترتيب الفقرات "
-                                "والعناوين قدر الإمكان.\n"
-                                "- لا تكتب وصفاً للصورة.\n"
-                                "- أعد النص فقط."
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": (
-                                    "data:image/jpeg;base64,"
-                                    f"{encoded_image}"
-                                )
-                            },
-                        },
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "استخرج النص العربي "
+                                        "الموجود في هذه الصفحة "
+                                        "كما هو تماماً.\n\n"
+                                        "مهم جداً:\n"
+                                        "- لا تلخص.\n"
+                                        "- لا تعيد صياغة.\n"
+                                        "- لا تضف أي كلام من عندك.\n"
+                                        "- حافظ على ترتيب الفقرات "
+                                        "والعناوين قدر الإمكان.\n"
+                                        "- لا تكتب وصفاً للصورة.\n"
+                                        "- أعد النص فقط."
+                                    ),
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": (
+                                            "data:image/jpeg;base64,"
+                                            f"{encoded_image}"
+                                        )
+                                    },
+                                },
+                            ],
+                        }
                     ],
-                }
-            ],
-            temperature=0,
-            max_completion_tokens=8000,
-        )
-    )
+                    temperature=0,
+                    max_completion_tokens=8000,
+                )
+            )
 
-    text = (
-        response
-        .choices[0]
-        .message
-        .content
-        or ""
-    )
+            text = (
+                response
+                .choices[0]
+                .message
+                .content
+                or ""
+            )
 
-    return text.strip()
+            if text.strip():
+                return text.strip()
+
+        except Exception as e:
+            logging.warning(f"[GROQ] فشل الاستخراج باستخدام النموذج {model}: {e}")
+            last_exception = e
+
+    if last_exception:
+        raise last_exception
+
+    return ""
 
 
 # ==========================================
@@ -487,3 +513,4 @@ async def publish_next_page(bot):
             )
 
             return False
+    
