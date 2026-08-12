@@ -35,7 +35,8 @@ GROQ_VISION_MODEL = os.getenv(
 
 MAGAZINE_FILE = os.getenv("MAGAZINE_FILE", "المشتاقون_إلى_الجنة.pdf").strip()
 
-MAGAZINE_DIR = os.getenv("MAGAZINE_DIR", "magazine_pdf").strip()
+# المجلد الذي يحتوي على ملف الـ PDF
+MAGAZINE_DIR = os.getenv("MAGAZINE_DIR", "magazine.pdf").strip()
 
 # ==========================================
 # صفحة بداية النشر
