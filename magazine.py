@@ -241,6 +241,7 @@ def render_page(
 def extract_text_sync(
     image_bytes: bytes,
 ) -> str:
+    import time
 
     if not groq_client:
         raise RuntimeError(
@@ -251,11 +252,11 @@ def extract_text_sync(
         image_bytes
     ).decode("utf-8")
 
-    # قائمة بالنماذج المتاحة للبدائل في حال فشل النموذج الرئيسي
+    # قائمة بالنماذج المتاحة الحديثة والمدعومة للرؤية والنصوص
     models_to_try = [
         GROQ_VISION_MODEL,
-        "llama-3.2-11b-vision-preview",
-        "llama-3.2-90b-vision-preview"
+        "llama-3.2-11b-vision",
+        "llama-3.3-70b-versatile"
     ]
     
     # إزالة التكرارات مع الحفاظ على الترتيب
@@ -306,7 +307,7 @@ def extract_text_sync(
                         }
                     ],
                     temperature=0,
-                    max_completion_tokens=8000,
+                    max_completion_tokens=4000, # تقليل السقف لمنع استنزاف وتخطي حدود التوكنز المفاجئة
                 )
             )
 
@@ -324,6 +325,9 @@ def extract_text_sync(
         except Exception as e:
             logging.warning(f"[GROQ] فشل الاستخراج باستخدام النموذج {model}: {e}")
             last_exception = e
+            # التهدئة والنوم البرمجي لمنع الحظر الفوري عند الانتقال للنموذج البديل
+            logging.info("[GROQ] الانتظار لمدة 5 ثوانٍ لتهدئة الطلبات قبل الانتقال للنموذج التالي...")
+            time.sleep(5)
 
     if last_exception:
         raise last_exception
@@ -511,6 +515,9 @@ async def publish_next_page(bot):
                 f"[MAGAZINE] فشل نشر الصفحة "
                 f"{page_number}: {e}"
             )
+            
+            # في حال فشل النشر الكلي، نمنع حلقة التكرار الفورية بانتظار دقيقة كاملة لراحة السيرفر
+            logging.info("[MAGAZINE] سيتم النوم مؤقتاً لمدة 60 ثانية قبل السماح بأي محاولة نشر جديدة...")
+            await asyncio.sleep(60)
 
             return False
-    
