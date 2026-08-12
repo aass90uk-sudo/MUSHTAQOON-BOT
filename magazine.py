@@ -1,8 +1,8 @@
 import asyncio
 import base64
-import io
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 import fitz  # PyMuPDF
@@ -19,6 +19,7 @@ from config import (
     START_PAGE,
     SUPABASE_ANON_KEY,
     SUPABASE_URL,
+    PUBLISH_RETRIES,
 )
 
 # ==========================================
@@ -66,24 +67,22 @@ def _resolve_magazine_path() -> str:
     # كحل أخير، نعيد المسار المتوقع حتى لو لم يوجد (يظهر خطأ واضح)
     return os.path.join(base_dir, magazine_file)
 
-
 MAGAZINE_PATH = _resolve_magazine_path()
 
 # ==========================================
-# إعداد Supabase لحفظ التقدم
+# إعداد Bolt Database لحفظ التقدم
 # ==========================================
 
 try:
-    from supabase import create_client, Client
+    from Bolt Database import create_client, Client
 except ImportError:
     Client = None  # type: ignore
     create_client = None  # type: ignore
 
 _supabase: Optional[Client] = None
 
-
 def _get_supabase() -> Optional[Client]:
-    """تهيئة عميل Supabase مرة واحدة."""
+    """تهيئة عميل Bolt Database مرة واحدة."""
     global _supabase
     if _supabase is not None:
         return _supabase
@@ -97,12 +96,11 @@ def _get_supabase() -> Optional[Client]:
         return None
     try:
         _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-        logging.info("[MAGAZINE] تم الاتصال بـ Supabase بنجاح.")
+        logging.info("[MAGAZINE] تم الاتصال بـ Bolt Database بنجاح.")
     except Exception as e:
-        logging.exception(f"[MAGAZINE] فشل الاتصال بـ Supabase: {e}")
+        logging.exception(f"[MAGAZINE] فشل الاتصال بـ Bolt Database: {e}")
         _supabase = None
     return _supabase
-
 
 # ==========================================
 # حفظ التقدم في ملف محلي (احتياطي)
@@ -114,11 +112,9 @@ _PROGRESS_FILE = os.path.join(
     "progress.json",
 )
 
-
 def _ensure_local_dir() -> None:
     """التأكد من وجود مجلد data/ للنسخ الاحتياطي."""
     os.makedirs(os.path.dirname(_PROGRESS_FILE), exist_ok=True)
-
 
 # ==========================================
 # قراءة وحفظ التقدم
@@ -126,7 +122,7 @@ def _ensure_local_dir() -> None:
 
 def load_progress() -> dict:
     """
-    قراءة حالة التقدم من Supabase (أو من ملف محلي احتياطي).
+    قراءة حالة التقدم من Bolt Database (أو من ملف محلي احتياطي).
     يعيد dict يحتوي على: next_page, finished
     """
     sb = _get_supabase()
@@ -142,7 +138,7 @@ def load_progress() -> dict:
             save_progress(next_page=START_PAGE, finished=False)
             return {"next_page": START_PAGE, "finished": False}
         except Exception as e:
-            logging.exception(f"[MAGAZINE] فشل قراءة التقدم من Supabase: {e}")
+            logging.exception(f"[MAGAZINE] فشل قراءة التقدم من Bolt Database: {e}")
 
     # الاحتياطي: ملف محلي
     import json
@@ -163,12 +159,12 @@ def load_progress() -> dict:
         pass
     return default
 
-
 def save_progress(next_page: int, finished: bool) -> None:
     """
-    حفظ حالة التقدم في Supabase (وملف محلي احتياطي).
+    حفظ حالة التقدم في Bolt Database (وملف محلي احتياطي).
     """
-    # Supabase
+    updated_at = datetime.now(timezone.utc).isoformat()
+    # Bolt Database
     sb = _get_supabase()
     if sb is not None:
         try:
@@ -176,10 +172,10 @@ def save_progress(next_page: int, finished: bool) -> None:
                 "id": 1,
                 "next_page": next_page,
                 "finished": finished,
-                "updated_at": "now()",
+                "updated_at": updated_at,
             }).execute()
         except Exception as e:
-            logging.exception(f"[MAGAZINE] فشل حفظ التقدم في Supabase: {e}")
+            logging.exception(f"[MAGAZINE] فشل حفظ التقدم في Bolt Database: {e}")
 
     # ملف محلي احتياطي
     import json
@@ -194,7 +190,6 @@ def save_progress(next_page: int, finished: bool) -> None:
             )
     except Exception as e:
         logging.exception(f"[MAGAZINE] فشل حفظ التقدم محلياً: {e}")
-
 
 # ==========================================
 # تحويل صفحة PDF إلى صورة
@@ -225,7 +220,6 @@ def render_page(page_number: int) -> bytes:
     finally:
         document.close()
 
-
 # ==========================================
 # استخراج النص من الصورة باستخدام Groq Vision
 # ==========================================
@@ -235,7 +229,6 @@ _publish_lock = asyncio.Lock()
 
 # عميل Groq (يتم إنشاؤه مرة واحدة)
 _groq_client: Optional[Groq] = None
-
 
 def _get_groq_client() -> Optional[Groq]:
     """تهيئة عميل Groq مرة واحدة."""
@@ -253,7 +246,6 @@ def _get_groq_client() -> Optional[Groq]:
         _groq_client = None
     return _groq_client
 
-
 # برومبت استخراج النص كما هو موجه في الكود الأصلي
 _EXTRACTION_PROMPT = (
     "أنت مساعد متخصص في استخراج النص العربي من الصور بدقة عالية. "
@@ -262,7 +254,6 @@ _EXTRACTION_PROMPT = (
     "لا تضف أي تعليق أو شرح أو مقدمة أو خاتمة. "
     "أعد فقط النص المستخرج كما هو."
 )
-
 
 async def extract_text(image_bytes: bytes) -> str:
     """
@@ -300,14 +291,12 @@ async def extract_text(image_bytes: bytes) -> str:
     result = await asyncio.to_thread(_call_groq)
     return result.strip()
 
-
 # ==========================================
 # الحد الأقصى لحروف التسمية في تيليجرام
 # ==========================================
 # تيليجرال يسمح بـ 1024 حرف كحد أقصى للـ caption مع الصورة.
 # نستخدم 1000 كحد آمن.
 MAX_CAPTION_LENGTH = 1000
-
 
 # ==========================================
 # بناء نص المنشور مع تقييد عدد الأحرف
@@ -386,7 +375,6 @@ def build_text(
     )
 
     return final_text
-
 
 # ==========================================
 # نشر الصفحة التالية وإدارة التقدم
@@ -487,6 +475,6 @@ async def publish_next_page(bot) -> bool:
 
         except Exception as e:
             logging.exception(f"[MAGAZINE] فشل نشر الصفحة {page_number}: {e}")
-            logging.info("[MAGAZINE] سيتم الانتظار 60 ثانية قبل المحاولة التالية...")
-            await asyncio.sleep(60)
+            logging.info("[MAGAZINE] فشل النشر؛ ستعيد الجدولة المحاولة تلقائياً.")
             return False
+    
