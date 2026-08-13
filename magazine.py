@@ -74,7 +74,7 @@ MAGAZINE_PATH = _resolve_magazine_path()
 # ==========================================
 
 try:
-    from Bolt Database import create_client, Client
+    from Bolt_Database import create_client, Client
 except ImportError:
     Client = None  # type: ignore
     create_client = None  # type: ignore
