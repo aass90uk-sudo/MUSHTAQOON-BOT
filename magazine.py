@@ -36,25 +36,18 @@ def _resolve_magazine_path() -> str:
     """
     magazine_file = MAGAZINE_FILE
 
-    # إذا كان المسار الممرر يحتوي على مسار كامل، نستخدمه مباشرة
     if os.path.isabs(magazine_file) and os.path.isfile(magazine_file):
         return magazine_file
 
-    # محاولة العثور على الملف داخل المجلد
     base_dir = MAGAZINE_DIR
     candidates = []
 
-    # 1) المسار المباشر كما هو
     candidates.append(magazine_file)
-
-    # 2) داخل المجلد مع الاسم الأصلي
     candidates.append(os.path.join(base_dir, magazine_file))
 
-    # 3) داخل المجلد مع إضافة .pdf إذا لم يكن موجوداً
     if not magazine_file.lower().endswith(".pdf"):
         candidates.append(os.path.join(base_dir, magazine_file + ".pdf"))
 
-    # 4) البحث داخل المجلد عن أي ملف PDF (يدعم الأسماء العربية المشفرة)
     if os.path.isdir(base_dir):
         for entry in os.listdir(base_dir):
             if entry.lower().endswith(".pdf"):
@@ -64,7 +57,6 @@ def _resolve_magazine_path() -> str:
         if os.path.isfile(candidate):
             return candidate
 
-    # كحل أخير، نعيد المسار المتوقع حتى لو لم يوجد (يظهر خطأ واضح)
     return os.path.join(base_dir, magazine_file)
 
 MAGAZINE_PATH = _resolve_magazine_path()
@@ -134,13 +126,11 @@ def load_progress() -> dict:
                     "next_page": result.data["next_page"],
                     "finished": result.data["finished"],
                 }
-            # لا يوجد صف بعد — نضيفه
             save_progress(next_page=START_PAGE, finished=False)
             return {"next_page": START_PAGE, "finished": False}
         except Exception as e:
             logging.exception(f"[MAGAZINE] فشل قراءة التقدم من Bolt Database: {e}")
 
-    # الاحتياطي: ملف محلي
     import json
     _ensure_local_dir()
     if os.path.isfile(_PROGRESS_FILE):
@@ -150,7 +140,6 @@ def load_progress() -> dict:
         except Exception:
             pass
 
-    # القيمة الافتراضية
     default = {"next_page": START_PAGE, "finished": False}
     try:
         with open(_PROGRESS_FILE, "w", encoding="utf-8") as f:
@@ -164,7 +153,6 @@ def save_progress(next_page: int, finished: bool) -> None:
     حفظ حالة التقدم في Bolt Database (وملف محلي احتياطي).
     """
     updated_at = datetime.now(timezone.utc).isoformat()
-    # Bolt Database
     sb = _get_supabase()
     if sb is not None:
         try:
@@ -177,7 +165,6 @@ def save_progress(next_page: int, finished: bool) -> None:
         except Exception as e:
             logging.exception(f"[MAGAZINE] فشل حفظ التقدم في Bolt Database: {e}")
 
-    # ملف محلي احتياطي
     import json
     _ensure_local_dir()
     try:
@@ -211,8 +198,7 @@ def render_page(page_number: int) -> bytes:
         if page_number < 1 or page_number > total:
             raise EOFError(f"الصفحة {page_number} خارج النطاق (1..{total}).")
 
-        page = document.load_page(page_number - 1)  # 0-indexed
-        # مصفوفة التكبير بناءً على DPI
+        page = document.load_page(page_number - 1)
         zoom = PDF_DPI / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
@@ -221,13 +207,28 @@ def render_page(page_number: int) -> bytes:
         document.close()
 
 # ==========================================
+# برومبت النظام الصارم لاستخراج النص العربي
+# ==========================================
+
+SYSTEM_PROMPT = """أنت مستخرج نصوص دقيق ومحترف ومتخصص في اللغة العربية.
+مهمتك الأساسية: قراءة الصورة المرسلة إليك لصفحة مجلة "المشتاقون إلى الجنة"
+واستخراج النص العربي الموجود داخلها بدقة وأمانة.
+
+⚠️ شروط وقوانين صارمة:
+1. اكتب النص المستخرج باللغة العربية الفصحى فقط، كما هو مكتوب في المجلة تماماً.
+2. يمنع منعاً باتاً وقاطعاً كتابة أي كلمة أو حرف باللغة الإنجليزية،
+   ويحظر تماماً إظهار وسوم التفكير مثل  أو أي تصنيفات مثل Header.
+3. يجب ألا يتجاوز طول النص المستخرج الإجمالي عن 1000 حرف كحد أقصى
+   لتفادي مشاكل الإرسال مع الصور في تيليجرام.
+4. ابدأ بكتابة نص الصفحة مباشرة دون أي مقدمات أو سلام أو عبارات توضيحية إضافية من عندك.
+"""
+
+# ==========================================
 # استخراج النص من الصورة باستخدام Groq Vision
 # ==========================================
 
-# قفل لمنع تداخل عمليات النشر المتزامنة
 _publish_lock = asyncio.Lock()
 
-# عميل Groq (يتم إنشاؤه مرة واحدة)
 _groq_client: Optional[Groq] = None
 
 def _get_groq_client() -> Optional[Groq]:
@@ -246,15 +247,6 @@ def _get_groq_client() -> Optional[Groq]:
         _groq_client = None
     return _groq_client
 
-# برومبت استخراج النص كما هو موجه في الكود الأصلي
-_EXTRACTION_PROMPT = (
-    "أنت مساعد متخصص في استخراج النص العربي من الصور بدقة عالية. "
-    "قم باستخراج كل النص الموجود في هذه الصفحة كما هو تماماً، "
-    "مع الحفاظ على التنسيق والفقرات والأسطر. "
-    "لا تضف أي تعليق أو شرح أو مقدمة أو خاتمة. "
-    "أعد فقط النص المستخرج كما هو."
-)
-
 async def extract_text(image_bytes: bytes) -> str:
     """
     استخراج النص من صورة باستخدام Groq Vision API.
@@ -263,7 +255,6 @@ async def extract_text(image_bytes: bytes) -> str:
     if client is None:
         raise RuntimeError("عميل Groq غير مهيأ — تحقق من GROQ_API_KEY.")
 
-    # تحويل الصورة إلى base64
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     data_url = f"data:image/png;base64,{b64}"
 
@@ -272,9 +263,13 @@ async def extract_text(image_bytes: bytes) -> str:
             model=GROQ_VISION_MODEL,
             messages=[
                 {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
+                {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": _EXTRACTION_PROMPT},
+                        {"type": "text", "text": "استخرج النص العربي من هذه الصفحة."},
                         {
                             "type": "image_url",
                             "image_url": {"url": data_url},
@@ -287,14 +282,13 @@ async def extract_text(image_bytes: bytes) -> str:
         )
         return completion.choices[0].message.content or ""
 
-    # تشغيل الاستدعاء المتزامن في خيط منفصل
     result = await asyncio.to_thread(_call_groq)
     return result.strip()
 
 # ==========================================
 # الحد الأقصى لحروف التسمية في تيليجرام
 # ==========================================
-# تيليجرال يسمح بـ 1024 حرف كحد أقصى للـ caption مع الصورة.
+# تيليجرام يسمح بـ 1024 حرف كحد أقصى للـ caption مع الصورة.
 # نستخدم 1000 كحد آمن.
 MAX_CAPTION_LENGTH = 1000
 
@@ -320,7 +314,6 @@ def build_text(
         f"الصفحة رقم {page_number}\n\n"
     )
 
-    # تنظيف النص المستخرج فقط لمنع تشوه التنسيق
     text = (
         extracted_text
         .strip()
@@ -328,22 +321,19 @@ def build_text(
         .replace("\r", "\n")
     )
 
-    # المساحة الصافية المتبقية للنص الحقيقي
     available_length = (
         MAX_CAPTION_LENGTH
         - len(header)
         - len(footer)
-        - 2  # الأسطر الفاصلة المضافة عند دمج المكونات
+        - 2
     )
 
     if available_length < 0:
         raise ValueError("العنوان والختم والرابط يتجاوزون حد 1000 حرف.")
 
-    # إذا كان النص أطول من المساحة المتاحة، نأخذ أكبر قدر ممكن منه
     if len(text) > available_length:
         text_part = text[:available_length]
 
-        # تلافي قطع الكلمة في منتصفها (البحث عن آخر مسافة أو سطر جديد)
         last_space = max(
             text_part.rfind(" "),
             text_part.rfind("\n"),
@@ -361,7 +351,6 @@ def build_text(
         + footer
     )
 
-    # حماية إسعافية نهائية صارمة لضمان السلامة المطلقة في الحالات الاستثنائية دون قطع كلمات
     if len(final_text) > MAX_CAPTION_LENGTH:
         allowed_text_len = MAX_CAPTION_LENGTH - len(header) - len(footer) - 2
         text_part = text_part[:allowed_text_len]
@@ -395,9 +384,6 @@ async def publish_next_page(bot) -> bool:
         logging.info(f"[MAGAZINE] بدء تجهيز الصفحة {page_number}...")
 
         try:
-            # ==================================
-            # تحويل الصفحة إلى صورة
-            # ==================================
             image_bytes = await asyncio.to_thread(
                 render_page,
                 page_number,
@@ -405,9 +391,6 @@ async def publish_next_page(bot) -> bool:
 
             logging.info(f"[MAGAZINE] تم تجهيز صورة الصفحة {page_number}.")
 
-            # ==================================
-            # استخراج النص الحقيقي من الصورة
-            # ==================================
             logging.info(f"[MAGAZINE] استخراج نص الصفحة {page_number}...")
 
             extracted_text = await extract_text(image_bytes)
@@ -417,17 +400,11 @@ async def publish_next_page(bot) -> bool:
 
             logging.info(f"[MAGAZINE] تم استخراج النص للصفحة {page_number}.")
 
-            # ==================================
-            # إنشاء المنشور النهائي
-            # ==================================
             final_text = build_text(
                 page_number,
                 extracted_text,
             )
 
-            # ==================================
-            # نشر الصورة + النص في منشور واحد
-            # ==================================
             logging.info(f"[MAGAZINE] نشر الصفحة {page_number} مع الصورة والنص...")
 
             await bot.send_photo(
@@ -438,21 +415,15 @@ async def publish_next_page(bot) -> bool:
 
             logging.info(f"[MAGAZINE] تم نشر الصفحة {page_number} بنجاح.")
 
-            # ==================================
-            # معرفة عدد صفحات المجلة
-            # ==================================
             document = fitz.open(MAGAZINE_PATH)
             try:
                 total_pages = len(document)
             finally:
                 document.close()
 
-            # ==================================
-            # حفظ التقدم وثبات العدادات
-            # ==================================
             if page_number >= total_pages:
                 save_progress(
-                    next_page=page_number,  # تثبيت العداد لمنع تجاوز فهرس الصفحات مستقبلاً
+                    next_page=page_number,
                     finished=True,
                 )
                 logging.info("[MAGAZINE] تم نشر آخر صفحة وانتهت المجلة بالكامل.")
@@ -477,4 +448,4 @@ async def publish_next_page(bot) -> bool:
             logging.exception(f"[MAGAZINE] فشل نشر الصفحة {page_number}: {e}")
             logging.info("[MAGAZINE] فشل النشر؛ ستعيد الجدولة المحاولة تلقائياً.")
             return False
-    
+        
