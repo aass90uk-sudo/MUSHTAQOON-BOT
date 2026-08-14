@@ -39,16 +39,16 @@ SYSTEM_PROMPT = """أنت ناسخ نصوص عربية من الصور، ولس�
 RETRY_PROMPT = "اقرأ الكلمات المطبوعة في الصفحة فقط. أعد النص العربي الظاهر وحده، دون شرح أو تفكير أو عناوين."
 _META_PHRASES = (
     "أنا مستخرج",
-    "مهمتي",
+    "مهمتي قراءة",
     "شروط صارمة",
-    "سأقوم",
-    "سأبدأ",
+    "سأقوم باستخراج",
+    "سأبدأ باستخراج",
     "لاحظت أن الصورة",
-    "النص في الصورة",
     "الصورة مقسمة",
-    "سأركز",
-    "أستخرج النص",
+    "سأركز على",
+    "أستخرج النص من الصورة",
 )
+_FALLBACK_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 _groq_client: Optional[Groq] = None
 _publish_lock = asyncio.Lock()
@@ -166,9 +166,9 @@ def _is_usable_ocr(value: str) -> bool:
     return bool(re.search(r"[\u0600-\u06ff]", value))
 
 
-def _request_ocr(image_url: str, user_prompt: str) -> str:
+def _request_ocr(image_url: str, user_prompt: str, model: str) -> str:
     response = _get_groq_client().chat.completions.create(
-        model=GROQ_VISION_MODEL,
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -187,12 +187,28 @@ def _request_ocr(image_url: str, user_prompt: str) -> str:
 
 async def extract_text(image_bytes: bytes) -> str:
     image_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    for attempt in range(2):
-        raw = await asyncio.to_thread(_request_ocr, image_url, RETRY_PROMPT if attempt else "استخرج النص العربي المطبوع في الصورة فقط.")
-        cleaned = _clean_ocr(raw)
-        if _is_usable_ocr(cleaned):
-            return cleaned
-        logging.warning("تم رفض إجابة الرؤية لأنها ليست نص الصفحة؛ المحاولة %s.", attempt + 1)
+    models = list(dict.fromkeys((GROQ_VISION_MODEL, _FALLBACK_VISION_MODEL)))
+    last_error: Optional[Exception] = None
+
+    for model in models:
+        try:
+            raw = await asyncio.to_thread(
+                _request_ocr,
+                image_url,
+                RETRY_PROMPT,
+                model,
+            )
+            cleaned = _clean_ocr(raw)
+            if _is_usable_ocr(cleaned):
+                logging.info("تم استخراج نص الصفحة باستخدام نموذج الرؤية.")
+                return cleaned
+            logging.warning("تم تجاهل إجابة غير صالحة من نموذج الرؤية؛ سيتم تجربة البديل.")
+        except Exception as error:
+            last_error = error
+            logging.exception("فشل طلب قراءة الصفحة من نموذج الرؤية.")
+
+    if last_error:
+        raise RuntimeError("تعذر قراءة نص الصفحة من خدمة الرؤية.") from last_error
     raise RuntimeError("لم تُرجع خدمة الرؤية نصاً صافياً من الصفحة.")
 
 
@@ -227,4 +243,3 @@ async def publish_next_page(bot: Any) -> bool:
             document.close()
         _save_progress(page_number if finished else page_number + 1, finished)
         return True
-    
