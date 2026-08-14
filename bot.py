@@ -26,14 +26,12 @@ logging.info("========== BOT STARTED ==========")
 
 async def verify_configuration(bot) -> None:
     """Fail early with an actionable message instead of a silent retry."""
-    from config import CHANNEL_USERNAME, GROQ_API_KEY
+    from config import CHANNEL_USERNAME
     from magazine import MAGAZINE_PATH
     import os
 
     if not CHANNEL_USERNAME:
         raise RuntimeError("CHANNEL_USERNAME غير موجود.")
-    if not GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY غير موجود.")
     if not os.path.isfile(MAGAZINE_PATH):
         raise FileNotFoundError(
             f"ملف المجلة غير موجود: {MAGAZINE_PATH}. "
@@ -58,7 +56,7 @@ async def verify_configuration(bot) -> None:
     logging.info("[CHECK] Magazine OK: %s", MAGAZINE_PATH)
 
 async def publish_with_retries(bot, source: str) -> None:
-    """Retry a post after temporary Telegram, Groq, or network failures."""
+    """Retry a post after temporary Telegram or network failures."""
     for attempt in range(1, PUBLISH_RETRIES + 1):
         try:
             if await publish_next_page(bot):
@@ -216,4 +214,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+            
