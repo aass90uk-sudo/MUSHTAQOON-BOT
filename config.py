@@ -32,6 +32,10 @@ PDF_DPI = int(os.getenv("PDF_DPI", "150"))
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Riyadh").strip()
 PUBLISH_RETRIES = max(1, int(os.getenv("PUBLISH_RETRIES", "3")))
 START_PAGE = int(os.getenv("START_PAGE", "9"))
+MAGAZINE_TITLE = os.getenv(
+    "MAGAZINE_TITLE",
+    "مجلة المشتاقون إلى الجنة",
+).strip()
 CHANNEL_STAMP = os.getenv(
     "CHANNEL_STAMP",
     "«رَيْحَانَةُ» المشتاقون إلى الجنة",

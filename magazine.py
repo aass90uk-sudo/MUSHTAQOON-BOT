@@ -12,6 +12,7 @@ from config import (
     CHANNEL_USERNAME,
     MAGAZINE_DIR,
     MAGAZINE_FILE,
+    MAGAZINE_TITLE,
     PDF_DPI,
     START_PAGE,
     SUPABASE_ANON_KEY,
@@ -90,11 +91,18 @@ def render_page(page_number: int) -> bytes:
     finally:
         document.close()
 
-def build_caption() -> str:
-    """توقيع القناة والختم فقط، دون نص الصفحة."""
-    parts = [CHANNEL_STAMP]
-    if CHANNEL_LINK:
-        parts.append(CHANNEL_LINK)
+def build_caption(page_number: int) -> str:
+    """Caption مطابق للتنسيق المطلوب، بدون نص مستخرج من الصفحة."""
+    parts = [
+        f"{MAGAZINE_TITLE} 📖",
+        f"الصفحة رقم {page_number}",
+        "",
+        "نص الصفحة يوجد في صورة المجلة ❤️",
+        "",
+        CHANNEL_USERNAME or CHANNEL_LINK,
+        "",
+        CHANNEL_STAMP,
+    ]
     return "\n".join(parts)
 
 async def publish_next_page(bot: Any) -> bool:
@@ -105,7 +113,7 @@ async def publish_next_page(bot: Any) -> bool:
 
         page_number = int(progress.get("next_page", START_PAGE))
         image_bytes = await asyncio.to_thread(render_page, page_number)
-        caption = build_caption()
+        caption = build_caption(page_number)
         await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_bytes, caption=caption)
 
         document = fitz.open(MAGAZINE_PATH)
