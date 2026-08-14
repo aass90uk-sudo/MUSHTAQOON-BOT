@@ -4,10 +4,11 @@ import logging
 import os
 from typing import Any, Optional
 
-import fitz
+import pymupdf as fitz
 
 from config import (
     CHANNEL_STAMP,
+    CHANNEL_LINK,
     CHANNEL_USERNAME,
     MAGAZINE_DIR,
     MAGAZINE_FILE,
@@ -21,7 +22,7 @@ _publish_lock = asyncio.Lock()
 _PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "progress.json")
 
 try:
-    from Bolt Database import Client, create_client
+    from supabase import Client, create_client
 except ImportError:
     Client = Any  # type: ignore[misc,assignment]
     create_client = None
@@ -91,7 +92,10 @@ def render_page(page_number: int) -> bytes:
 
 def build_caption() -> str:
     """توقيع القناة والختم فقط، دون نص الصفحة."""
-    return f"{CHANNEL_USERNAME}\n{CHANNEL_STAMP}"
+    parts = [CHANNEL_STAMP]
+    if CHANNEL_LINK:
+        parts.append(CHANNEL_LINK)
+    return "\n".join(parts)
 
 async def publish_next_page(bot: Any) -> bool:
     async with _publish_lock:
