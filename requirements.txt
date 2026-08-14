@@ -1,8 +1,7 @@
 python-telegram-bot==21.10
 pymupdf==1.24.11
-groq>=0.31.1
 apscheduler==3.10.4
 pytz==2024.1
 python-dotenv==1.0.1
 requests>=2.31.0
-supabase>=2.9.0
+Bolt Database>=2.9.0
