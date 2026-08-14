@@ -1,67 +1,32 @@
 import asyncio
-import base64
 import json
 import logging
 import os
-import re
 from typing import Any, Optional
 
 import fitz
-from groq import Groq
 
 from config import (
     CHANNEL_STAMP,
     CHANNEL_USERNAME,
-    GROQ_API_KEY,
-    GROQ_VISION_MODEL,
     MAGAZINE_DIR,
     MAGAZINE_FILE,
-    MAX_CAPTION_LENGTH,
     PDF_DPI,
     START_PAGE,
     SUPABASE_ANON_KEY,
     SUPABASE_URL,
 )
 
-SYSTEM_PROMPT = """أنت ناسخ نصوص عربية من الصور، ولست مساعداً حوارياً.
-اقرأ صفحة مجلة المشتاقون إلى الجنة المرفقة واستخرج الكلمات الظاهرة في الصفحة فقط.
-
-التزم بهذه القواعد دون استثناء:
-١. أعد النص العربي الظاهر في الصورة وحده، بالحروف والكلمات كما تظهر.
-٢. لا تكتب تفكيراً أو شرحاً أو مقدمة أو خاتمة أو تحية أو أسماء أقسام.
-٣. لا تذكر ما تفعله ولا تصف الصورة ولا تكرر التعليمات.
-٤. لا تستخدم أي لغة أجنبية أو رموز تنسيق أو وسوم.
-٥. إذا كان جزء من الصورة غير واضح، اتركه ولا تخمّن نصاً من عندك.
-٦. ابدأ مباشرة بأول كلمة مقروءة من الصفحة.
-٧. أعد النص في ألف حرف أو أقل.
-"""
-
-RETRY_PROMPT = "اقرأ الكلمات المطبوعة في الصفحة فقط. أعد النص العربي الظاهر وحده، دون شرح أو تفكير أو عناوين."
-_META_PHRASES = (
-    "أنا مستخرج",
-    "مهمتي قراءة",
-    "شروط صارمة",
-    "سأقوم باستخراج",
-    "سأبدأ باستخراج",
-    "لاحظت أن الصورة",
-    "الصورة مقسمة",
-    "سأركز على",
-    "أستخرج النص من الصورة",
-)
-_FALLBACK_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-
-_groq_client: Optional[Groq] = None
 _publish_lock = asyncio.Lock()
 _PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "progress.json")
 
 try:
-    from supabase import Client, create_client
+    from Bolt Database import Client, create_client
 except ImportError:
     Client = Any  # type: ignore[misc,assignment]
     create_client = None
 
 _supabase: Optional[Client] = None
-
 
 def _resolve_magazine_path() -> str:
     candidates = [MAGAZINE_FILE, os.path.join(MAGAZINE_DIR, MAGAZINE_FILE)]
@@ -75,25 +40,13 @@ def _resolve_magazine_path() -> str:
         )
     return next((path for path in candidates if os.path.isfile(path)), candidates[0])
 
-
 MAGAZINE_PATH = _resolve_magazine_path()
-
-
-def _get_groq_client() -> Groq:
-    global _groq_client
-    if _groq_client is None:
-        if not GROQ_API_KEY:
-            raise RuntimeError("مفتاح خدمة الرؤية غير موجود.")
-        _groq_client = Groq(api_key=GROQ_API_KEY)
-    return _groq_client
-
 
 def _get_supabase() -> Optional[Client]:
     global _supabase
     if _supabase is None and create_client and SUPABASE_URL and SUPABASE_ANON_KEY:
         _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     return _supabase
-
 
 def _load_progress() -> dict[str, Any]:
     client = _get_supabase()
@@ -111,7 +64,6 @@ def _load_progress() -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError):
         return {"next_page": START_PAGE, "finished": False}
 
-
 def _save_progress(next_page: int, finished: bool) -> None:
     data = {"next_page": next_page, "finished": finished}
     client = _get_supabase()
@@ -123,7 +75,6 @@ def _save_progress(next_page: int, finished: bool) -> None:
             logging.exception("تعذر حفظ تقدم المجلة في قاعدة البيانات.")
     with open(_PROGRESS_FILE, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False)
-
 
 def render_page(page_number: int) -> bytes:
     if not os.path.isfile(MAGAZINE_PATH):
@@ -138,91 +89,9 @@ def render_page(page_number: int) -> bytes:
     finally:
         document.close()
 
-
-def _strip_thinking(value: str) -> str:
-    value = re.sub(r"<think>.*?</think>", "", value, flags=re.IGNORECASE | re.DOTALL)
-    value = re.sub(r"<think>.*$", "", value, flags=re.IGNORECASE | re.DOTALL)
-    value = re.sub(r"</?think>", "", value, flags=re.IGNORECASE)
-    return value.strip()
-
-
-def _clean_ocr(value: str) -> str:
-    value = _strip_thinking(value)
-    value = re.sub(r"<[^>]*>", "", value)
-    value = value.replace("```", "").replace("**", "").replace("*", "")
-    lines: list[str] = []
-    for line in value.replace("\r", "").split("\n"):
-        if re.search(r"[A-Za-z]", line):
-            continue
-        line = re.sub(r"[\\`#]", "", line).strip()
-        if line:
-            lines.append(line)
-    return "\n".join(lines).strip()
-
-
-def _is_usable_ocr(value: str) -> bool:
-    if not value or any(phrase in value for phrase in _META_PHRASES):
-        return False
-    return bool(re.search(r"[\u0600-\u06ff]", value))
-
-
-def _request_ocr(image_url: str, user_prompt: str, model: str) -> str:
-    response = _get_groq_client().chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_prompt},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ],
-        temperature=0,
-        max_tokens=1400,
-    )
-    return response.choices[0].message.content or ""
-
-
-async def extract_text(image_bytes: bytes) -> str:
-    image_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    models = list(dict.fromkeys((GROQ_VISION_MODEL, _FALLBACK_VISION_MODEL)))
-    last_error: Optional[Exception] = None
-
-    for model in models:
-        try:
-            raw = await asyncio.to_thread(
-                _request_ocr,
-                image_url,
-                RETRY_PROMPT,
-                model,
-            )
-            cleaned = _clean_ocr(raw)
-            if _is_usable_ocr(cleaned):
-                logging.info("تم استخراج نص الصفحة باستخدام نموذج الرؤية.")
-                return cleaned
-            logging.warning("تم تجاهل إجابة غير صالحة من نموذج الرؤية؛ سيتم تجربة البديل.")
-        except Exception as error:
-            last_error = error
-            logging.exception("فشل طلب قراءة الصفحة من نموذج الرؤية.")
-
-    if last_error:
-        raise RuntimeError("تعذر قراءة نص الصفحة من خدمة الرؤية.") from last_error
-    raise RuntimeError("لم تُرجع خدمة الرؤية نصاً صافياً من الصفحة.")
-
-
-def build_text(extracted_text: str) -> str:
-    footer = f"{CHANNEL_USERNAME}\n{CHANNEL_STAMP}"
-    separator = "\n\n"
-    available = MAX_CAPTION_LENGTH - len(footer) - len(separator)
-    text = _clean_ocr(extracted_text)
-    if len(text) > available:
-        text = text[:available].rsplit(" ", 1)[0].rstrip()
-    final_text = f"{text}{separator}{footer}"
-    logging.info("طول النص النهائي: %s حرفاً.", len(final_text))
-    return final_text
-
+def build_caption() -> str:
+    """توقيع القناة والختم فقط، دون نص الصفحة."""
+    return f"{CHANNEL_USERNAME}\n{CHANNEL_STAMP}"
 
 async def publish_next_page(bot: Any) -> bool:
     async with _publish_lock:
@@ -232,8 +101,7 @@ async def publish_next_page(bot: Any) -> bool:
 
         page_number = int(progress.get("next_page", START_PAGE))
         image_bytes = await asyncio.to_thread(render_page, page_number)
-        extracted_text = await extract_text(image_bytes)
-        caption = build_text(extracted_text)
+        caption = build_caption()
         await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_bytes, caption=caption)
 
         document = fitz.open(MAGAZINE_PATH)
@@ -243,3 +111,4 @@ async def publish_next_page(bot: Any) -> bool:
             document.close()
         _save_progress(page_number if finished else page_number + 1, finished)
         return True
+        
